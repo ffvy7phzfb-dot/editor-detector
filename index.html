@@ -85,7 +85,6 @@
     background: var(--panel-bg); min-height: 150px;
     word-wrap: break-word;
   }
-  .preview .token { display: inline; }
   .repeat {
     border-radius: 3px; padding: 1px 4px;
     cursor: pointer; border-bottom: 2px solid transparent;
@@ -210,12 +209,88 @@
 
 <div id="toast"></div>
 
-<!-- ЛОКАЛЬНЫЙ СТЕММЕР SNOWBALL (файл bundle.min.js лежит рядом с index.html) -->
-<script src="./bundle.min.js"></script>
-
 <script>
 /* ============================================================
-   ВСТРОЕННЫЙ СТЕММЕР (fallback, если Snowball не загрузился)
+   SNOWBALL RUSSIAN STEMMER (встроенный, компактная версия)
+   Основан на алгоритме Snowball для русского языка.
+   ============================================================ */
+var RussianStemmer = function() {
+  var vowel = /[аеиоуыэюя]/;
+  var perfectiveground = /(ив|ивши|ившись|ыв|ывши|ывшись)$/;
+  var reflexive = /(с[яьи])$/;
+  var adjective = /(ими|ій|ый|ой|ий|ая|яя|ое|ее|ые|ие|ому|ему|ого|его|ому|ім|ым|им|ыми|ьми|ий|ій|ий|ой|ый|ого|ому|ыми|ых|іх|ых|ую|юю|ая|яя|ою|ею)$/;
+  var participle1 = /(ем|нн|вш|ющ|щ|ивш|ывш)$/;
+  var participle2 = /(ую|юю|ая|яя|ою|ею)$/;
+  var verb = /(ла|на|ете|йте|ли|й|л|ем|н|ло|но|ет|ют|ны|ть|ешь|нно|его|ему|ому|ій|ый|ой|ий|ая|яя|ое|ее|ые|ие|ому|его|ого|ему)$/;
+  var noun = /(а|ев|ов|е|иями|ями|ами|еи|ии|и|ией|ей|ой|ий|й|иям|ям|ием|ем|ам|ом|о|у|ах|иях|ях|ы|ь|ию|ью|ю|ия|ья|я)$/;
+  var superlative = /(ейш|ейше)$/;
+  var derivational = /(ост|ость)$/;
+  var i = /и$/;
+  var softsign = /ь$/;
+
+  function stemWord(word) {
+    var w = word.toLowerCase().replace(/ё/g, 'е');
+    if (w.length < 3) return w;
+
+    var start = 0;
+    var RV = w.length;
+    for (var j = 0; j < w.length; j++) {
+      if (vowel.test(w[j])) {
+        var k = j + 1;
+        while (k < w.length && vowel.test(w[k])) k++;
+        if (k < w.length && !vowel.test(w[k])) {
+          RV = k + 1;
+          break;
+        }
+      }
+    }
+
+    var beforeRV = w.substring(0, RV);
+    var rv = w.substring(RV);
+
+    if (perfectiveground.test(rv)) {
+      rv = rv.replace(perfectiveground, '');
+    } else if (reflexive.test(rv)) {
+      rv = rv.replace(reflexive, '');
+      if (adjective.test(rv)) {
+        rv = rv.replace(adjective, '');
+        rv = rv.replace(participle1, '');
+      } else if (participle1.test(rv)) {
+        rv = rv.replace(participle1, '');
+        if (participle2.test(rv)) rv = rv.replace(participle2, '');
+      } else if (verb.test(rv)) {
+        rv = rv.replace(verb, '');
+      } else if (noun.test(rv)) {
+        rv = rv.replace(noun, '');
+      }
+    } else {
+      if (adjective.test(rv)) {
+        rv = rv.replace(adjective, '');
+        rv = rv.replace(participle1, '');
+      } else if (participle1.test(rv)) {
+        rv = rv.replace(participle1, '');
+        if (participle2.test(rv)) rv = rv.replace(participle2, '');
+      } else if (verb.test(rv)) {
+        rv = rv.replace(verb, '');
+      } else if (noun.test(rv)) {
+        rv = rv.replace(noun, '');
+      }
+    }
+
+    var result = beforeRV + rv;
+    if (i.test(result)) {
+      var rv2 = result.substring(RV);
+      if (rv2.length > 1) result = result.slice(0, -1);
+    }
+    if (softsign.test(result)) result = result.slice(0, -1);
+    return result;
+  }
+
+  return { stemWord: stemWord };
+};
+
+/* ============================================================
+   ВСТРОЕННЫЙ СТЕММЕР (fallback)
    ============================================================ */
 function simpleRussianStem(word) {
   let w = word.toLowerCase().replace(/ё/g, 'е');
@@ -304,8 +379,7 @@ function simpleRussianStem(word) {
   /* ============ СТЕММЕР ============ */
   let snowballStemmer = null;
   try {
-    const S = window.SnowballStemmers || window.snowballStemmers;
-    if (S && S.newStemmer) snowballStemmer = S.newStemmer('russian');
+    snowballStemmer = RussianStemmer();
   } catch (e) {}
   if (!snowballStemmer) stemWarn.style.display = 'inline';
 
