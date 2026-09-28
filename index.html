@@ -211,8 +211,7 @@
 
 <script>
 /* ============================================================
-   SNOWBALL RUSSIAN STEMMER (встроенный, компактная версия)
-   Основан на алгоритме Snowball для русского языка.
+   SNOWBALL RUSSIAN STEMMER (встроенный)
    ============================================================ */
 var RussianStemmer = function() {
   var vowel = /[аеиоуыэюя]/;
@@ -232,7 +231,6 @@ var RussianStemmer = function() {
     var w = word.toLowerCase().replace(/ё/g, 'е');
     if (w.length < 3) return w;
 
-    var start = 0;
     var RV = w.length;
     for (var j = 0; j < w.length; j++) {
       if (vowel.test(w[j])) {
@@ -288,6 +286,38 @@ var RussianStemmer = function() {
 
   return { stemWord: stemWord };
 };
+
+/* ============================================================
+   КЛЮЧИ СЛОВА: стемм + "обрубок" первых 5 букв
+   ============================================================ */
+// Обрубок ловит однокоренные слова разных частей речи:
+// «работники» → работ, «работали» → работ → совпадают.
+const STUB_LENGTH = 5;
+
+function getWordKeys(word) {
+  const lower = word.toLowerCase().replace(/ё/g, 'е');
+  const keys = new Set();
+
+  // 1) Полный стемм через Snowball
+  if (snowballStemmer) {
+    try {
+      const stem = snowballStemmer.stemWord(lower);
+      if (stem.length >= 3) keys.add(stem);
+    } catch (e) {}
+  }
+
+  // 2) Обрубок: первые 5 букв (если слово длиннее 5)
+  if (lower.length > STUB_LENGTH) {
+    keys.add('stub:' + lower.slice(0, STUB_LENGTH));
+  }
+
+  // 3) Fallback-стеммер (на случай, если Snowball не сработал)
+  if (keys.size === 0) {
+    keys.add(simpleRussianStem(lower));
+  }
+
+  return [...keys];
+}
 
 /* ============================================================
    ВСТРОЕННЫЙ СТЕММЕР (fallback)
@@ -383,15 +413,6 @@ function simpleRussianStem(word) {
   } catch (e) {}
   if (!snowballStemmer) stemWarn.style.display = 'inline';
 
-  function getStem(word) {
-    const lower = word.toLowerCase();
-    if (snowballStemmer) {
-      try { return snowballStemmer.stemWord(lower); }
-      catch (e) { return simpleRussianStem(lower); }
-    }
-    return simpleRussianStem(lower);
-  }
-
   /* ============ СТОП-СЛОВА ============ */
   const STOP_WORDS = new Set([
     'и','в','во','не','что','он','на','я','с','со','как','а','то','все','она',
@@ -432,7 +453,7 @@ function simpleRussianStem(word) {
           tokens.push({
             type: 'word',
             text: part,
-            stem: getStem(part),
+            keys: getWordKeys(part),
             isHeading: isHead
           });
         } else {
@@ -490,42 +511,106 @@ function simpleRussianStem(word) {
     const tokens = tokenize(text);
     currentTokens = tokens;
 
-    const stemOccurrences = new Map();
+    // Теперь у каждого слова МАССИВ ключей (стемм + обрубок).
+    // Ищем пересечения ключей между словами.
+    // keyToOccurrences: ключ → список вхождений { tokenIdx, word, keys }
+    const keyToOccurrences = new Map();
+
     tokens.forEach((t, idx) => {
       if (t.type !== 'word') return;
-      if (t.text.length < 3) return;
+      if (t.text.length < 4) return;              // короче 4 букв не трогаем
       if (STOP_WORDS.has(t.text.toLowerCase())) return;
       if (t.isHeading) return;
-      if (!stemOccurrences.has(t.stem)) stemOccurrences.set(t.stem, []);
-      stemOccurrences.get(t.stem).push({ tokenIdx: idx, word: t.text });
+      for (const key of t.keys) {
+        if (!keyToOccurrences.has(key)) keyToOccurrences.set(key, []);
+        keyToOccurrences.get(key).push({ tokenIdx: idx, word: t.text, keys: t.keys });
+      }
     });
 
-    let colorIdx = 0;
-    const sortedStems = [...stemOccurrences.keys()].sort();
-    const pairsFound = [];
+    // Для каждого ключа — если встретился ≥2 раз на близком расстоянии,
+    // помечаем ВСЕ вхождения этого ключа как повтор.
+    // Одно слово может попасть в несколько пар — это ок.
+    const markedTokens = new Map(); // tokenIdx → Set<key>
 
-    for (const stem of sortedStems) {
-      const occs = stemOccurrences.get(stem);
+    function markToken(tokenIdx, key) {
+      if (!markedTokens.has(tokenIdx)) markedTokens.set(tokenIdx, new Set());
+      markedTokens.get(tokenIdx).add(key);
+    }
+
+    for (const [key, occs] of keyToOccurrences) {
       if (occs.length < 2) continue;
 
-      const closeOccs = new Set();
+      // Ищем пары на расстоянии ≤ distance
+      const closeIdx = new Set();
       for (let i = 0; i < occs.length; i++) {
         for (let j = i + 1; j < occs.length; j++) {
-          const wordDistance = countWordsBetween(tokens, occs[i].tokenIdx, occs[j].tokenIdx);
-          if (wordDistance <= distance) {
-            closeOccs.add(i);
-            closeOccs.add(j);
+          const d = countWordsBetween(tokens, occs[i].tokenIdx, occs[j].tokenIdx);
+          if (d <= distance) {
+            closeIdx.add(i);
+            closeIdx.add(j);
           }
         }
       }
-
-      if (closeOccs.size >= 2) {
-        const finalOccs = [...closeOccs].sort((a, b) => a - b).map(i => occs[i]);
-        pairsFound.push({ stem, colorIndex: colorIdx++, occurrences: finalOccs });
+      if (closeIdx.size >= 2) {
+        for (const i of closeIdx) {
+          markToken(occs[i].tokenIdx, key);
+        }
       }
     }
 
+    // Группируем помеченные токены по ключам в "пары" для панели
+    // Считаем: одна "пара" = один ключ, у которого ≥2 помеченных вхождений.
+    // Но чтобы не дублировать («работники» помечены ключами «работник» и «stub:работ»),
+    // объединяем вхождения по tokenIdx.
+    const pairsFound = [];
+    const usedTokenIdxs = new Set();
+    let colorIdx = 0;
+
+    // Итерируем ключи в порядке появления
+    const sortedKeys = [...markedTokens.entries()]
+      .sort((a, b) => {
+        const aMin = Math.min(...a[1]);
+        return aMin - Math.min(...b[1]);
+      });
+
+    // Соберём уникальные группы: tokenIdx → keys[] уже есть.
+    // Для панели возьмём "главный" ключ (без stub:), если есть.
+    const alreadyGrouped = new Set();
+
+    for (const [tokenIdx, keys] of sortedKeys) {
+      if (alreadyGrouped.has(tokenIdx)) continue;
+
+      // Найдём все токены, связанные с этими ключами
+      const group = new Set([tokenIdx]);
+      for (const k of keys) {
+        const occs = keyToOccurrences.get(k) || [];
+        for (const o of occs) group.add(o.tokenIdx);
+      }
+
+      // Помечаем группу
+      const groupArr = [...group].sort((a, b) => a - b);
+      for (const g of groupArr) alreadyGrouped.add(g);
+
+      // Главный ключ для отображения
+      let mainKey = null;
+      for (const k of keys) {
+        if (!k.startsWith('stub:')) { mainKey = k; break; }
+      }
+      if (!mainKey) mainKey = [...keys][0];
+
+      pairsFound.push({
+        stem: mainKey.replace(/^stub:/, ''),
+        colorIndex: colorIdx++,
+        occurrences: groupArr.map(idx => ({
+          tokenIdx: idx,
+          word: tokens[idx].text
+        }))
+      });
+    }
+
     currentPairs = pairsFound;
+
+    // Карта tokenIdx → colorIndex
     const tokenToColor = new Map();
     pairsFound.forEach(p => {
       p.occurrences.forEach(o => tokenToColor.set(o.tokenIdx, p.colorIndex));
@@ -563,7 +648,7 @@ function simpleRussianStem(word) {
                        style="background:${color.bg};border-bottom-color:${color.border}"
                        data-token-idx="${i}"
                        data-word="${escapeAttr(t.text)}"
-                       data-stem="${escapeAttr(t.stem)}">${escapeHtml(t.text)}</span>`;
+                       data-stem="${escapeAttr(t.keys[0] || '')}">${escapeHtml(t.text)}</span>`;
       } else {
         html += escapeHtml(t.text);
       }
@@ -631,7 +716,7 @@ function simpleRussianStem(word) {
     return left.trim() + '…' + right.trim();
   }
 
-  /* ============ ВСТРОЕННЫЙ СЛОВАРЬ (быстрые синонимы) ============ */
+  /* ============ ВСТРОЕННЫЙ СЛОВАРЬ ============ */
   const BUILTIN_SYNONYMS = {
     'магазин': ['лавка', 'лабаз', 'супермаркет', 'универмаг', 'торговая точка'],
     'кот': ['кошка', 'котёнок', 'мурлыка', 'васька'],
@@ -654,7 +739,7 @@ function simpleRussianStem(word) {
     'слабый': ['немощный', 'хрупкий', 'бессильный', 'вялый', 'хилый'],
   };
 
-  /* ============ СЛОВАРЬ АБРАМОВА (офлайн) ============ */
+  /* ============ СЛОВАРЬ АБРАМОВА ============ */
   let abramovDict = null;
 
   async function loadAbramovDictionary() {
