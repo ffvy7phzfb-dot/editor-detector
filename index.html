@@ -207,57 +207,27 @@
 
 <script>
 /* ============================================================
-   СТЕММЕР: обрезает окончания + добавляет "обрубок" первых 5 букв
+   ПРОСТОЙ СТЕММЕР (обрезает основные русские окончания)
    ============================================================ */
-
-// Основные русские окончания
-const RU_ENDINGS = [
-  'иями','иях','иям','ией','аться','яться','иться','еться','ываться',
-  'иваться','уется','ается','яется','ится','ется','ать','ять','ить',
-  'еть','уть','ыть','ает','яет','ует','ают','яют','уют','ала','яла',
-  'ила','ела','ула','ыла','али','яли','или','ели','ули','ыли','ал',
-  'ял','ил','ел','ул','ыл','аю','яю','ую','юю','ай','яй','уй','ой',
-  'ей','ая','яя','ое','ее','ые','ие','ый','ий','ым','им','ем','ом',
-  'ам','ям','ах','ях','ов','ев','ую','юю','ия','ие','ии','ями','ами',
-  'ость','ости','никам','никами','ников','ника','ником','нике','ники',
-  'у','ю','а','я','о','е','ы','и','й','ь'
-];
-
 function simpleRussianStem(word) {
   let w = word.toLowerCase().replace(/ё/g, 'е');
   if (w.length <= 4) return w;
-  for (const end of RU_ENDINGS) {
+  const endings = [
+    'иями','иях','иям','ией','аться','яться','иться','еться','ываться',
+    'иваться','уется','ается','яется','ится','ется','ать','ять','ить',
+    'еть','уть','ыть','ает','яет','ует','ают','яют','уют','ала','яла',
+    'ила','ела','ула','ыла','али','яли','или','ели','ули','ыли','ал',
+    'ял','ил','ел','ул','ыл','аю','яю','ую','юю','ай','яй','уй','ой',
+    'ей','ая','яя','ое','ее','ые','ие','ый','ий','ым','им','ем','ом',
+    'ам','ям','ах','ях','ов','ев','ую','юю','ия','ие','ии','ями','ами',
+    'у','ю','а','я','о','е','ы','и','й','ь'
+  ];
+  for (const end of endings) {
     if (w.length - end.length >= 4 && w.endsWith(end)) {
       return w.slice(0, -end.length);
     }
   }
   return w;
-}
-
-// Обрубок — первые N букв слова (без окончания)
-const STUB_LENGTH = 5;
-
-function getStub(word) {
-  const w = word.toLowerCase().replace(/ё/g, 'е');
-  if (w.length <= STUB_LENGTH) return w;
-  return 'stub:' + w.slice(0, STUB_LENGTH);
-}
-
-// Все ключи слова
-function getWordKeys(word) {
-  const lower = word.toLowerCase().replace(/ё/g, 'е');
-  const keys = new Set();
-
-  // 1) Полный стемм
-  const stem = simpleRussianStem(lower);
-  if (stem.length >= 3) keys.add(stem);
-
-  // 2) Обрубок (для однокоренных разных частей речи)
-  if (lower.length > STUB_LENGTH) {
-    keys.add(getStub(lower));
-  }
-
-  return [...keys];
 }
 
 /* ============================================================
@@ -362,7 +332,7 @@ function getWordKeys(word) {
           tokens.push({
             type: 'word',
             text: part,
-            keys: getWordKeys(part),
+            stem: simpleRussianStem(part),
             isHeading: isHead
           });
         } else {
@@ -420,88 +390,42 @@ function getWordKeys(word) {
     const tokens = tokenize(text);
     currentTokens = tokens;
 
-    // keyToOccurrences: ключ → список { tokenIdx }
-    const keyToOccurrences = new Map();
-
+    const stemOccurrences = new Map();
     tokens.forEach((t, idx) => {
       if (t.type !== 'word') return;
-      if (t.text.length < 4) return;
+      if (t.text.length < 3) return;
       if (STOP_WORDS.has(t.text.toLowerCase())) return;
       if (t.isHeading) return;
-      for (const key of t.keys) {
-        if (!keyToOccurrences.has(key)) keyToOccurrences.set(key, []);
-        keyToOccurrences.get(key).push({ tokenIdx: idx, word: t.text });
-      }
+      if (!stemOccurrences.has(t.stem)) stemOccurrences.set(t.stem, []);
+      stemOccurrences.get(t.stem).push({ tokenIdx: idx, word: t.text });
     });
 
-    // Помечаем токены, у которых есть близкий повтор по любому ключу
-    const markedTokens = new Map(); // tokenIdx → Set<key>
+    let colorIdx = 0;
+    const sortedStems = [...stemOccurrences.keys()].sort();
+    const pairsFound = [];
 
-    for (const [key, occs] of keyToOccurrences) {
+    for (const stem of sortedStems) {
+      const occs = stemOccurrences.get(stem);
       if (occs.length < 2) continue;
 
-      const closeIdx = new Set();
+      const closeOccs = new Set();
       for (let i = 0; i < occs.length; i++) {
         for (let j = i + 1; j < occs.length; j++) {
-          const d = countWordsBetween(tokens, occs[i].tokenIdx, occs[j].tokenIdx);
-          if (d <= distance) {
-            closeIdx.add(i);
-            closeIdx.add(j);
+          const wordDistance = countWordsBetween(tokens, occs[i].tokenIdx, occs[j].tokenIdx);
+          if (wordDistance <= distance) {
+            closeOccs.add(i);
+            closeOccs.add(j);
           }
         }
       }
 
-      if (closeIdx.size >= 2) {
-        for (const i of closeIdx) {
-          const ti = occs[i].tokenIdx;
-          if (!markedTokens.has(ti)) markedTokens.set(ti, new Set());
-          markedTokens.get(ti).add(key);
-        }
+      if (closeOccs.size >= 2) {
+        const finalOccs = [...closeOccs].sort((a, b) => a - b).map(i => occs[i]);
+        pairsFound.push({ stem, colorIndex: colorIdx++, occurrences: finalOccs });
       }
-    }
-
-    // Группируем помеченные токены в «пары» для панели
-    const pairsFound = [];
-    const alreadyGrouped = new Set();
-    let colorIdx = 0;
-
-    // Сортируем токены по позиции
-    const sortedTokenIdxs = [...markedTokens.keys()].sort((a, b) => a - b);
-
-    for (const tokenIdx of sortedTokenIdxs) {
-      if (alreadyGrouped.has(tokenIdx)) continue;
-      const keys = markedTokens.get(tokenIdx);
-
-      // Собираем все токены, связанные любым из этих ключей
-      const group = new Set([tokenIdx]);
-      for (const k of keys) {
-        const occs = keyToOccurrences.get(k) || [];
-        for (const o of occs) group.add(o.tokenIdx);
-      }
-
-      const groupArr = [...group].sort((a, b) => a - b);
-      for (const g of groupArr) alreadyGrouped.add(g);
-
-      // Главный ключ (без stub:)
-      let mainKey = null;
-      for (const k of keys) {
-        if (!k.startsWith('stub:')) { mainKey = k; break; }
-      }
-      if (!mainKey) mainKey = [...keys][0];
-      const displayStem = mainKey.replace(/^stub:/, '');
-
-      pairsFound.push({
-        stem: displayStem,
-        colorIndex: colorIdx++,
-        occurrences: groupArr.map(idx => ({
-          tokenIdx: idx,
-          word: tokens[idx].text
-        }))
-      });
     }
 
     currentPairs = pairsFound;
-
     const tokenToColor = new Map();
     pairsFound.forEach(p => {
       p.occurrences.forEach(o => tokenToColor.set(o.tokenIdx, p.colorIndex));
@@ -539,7 +463,7 @@ function getWordKeys(word) {
                        style="background:${color.bg};border-bottom-color:${color.border}"
                        data-token-idx="${i}"
                        data-word="${escapeAttr(t.text)}"
-                       data-stem="${escapeAttr(t.keys[0] || '')}">${escapeHtml(t.text)}</span>`;
+                       data-stem="${escapeAttr(t.stem)}">${escapeHtml(t.text)}</span>`;
       } else {
         html += escapeHtml(t.text);
       }
