@@ -151,13 +151,10 @@
     cursor: pointer; font-size: 14px; color: var(--text);
   }
   #synonym-popup .syn-item:hover { background: var(--syn-hover); }
-  #synonym-popup .syn-add {
-    border-style: dashed; opacity: 0.7;
-  }
+  #synonym-popup .syn-add { border-style: dashed; opacity: 0.7; }
   #synonym-popup .loading,
   #synonym-popup .empty { color: var(--text-muted); font-size: 13px; }
   .stats { font-size: 12px; color: var(--text-muted); margin-left: 8px; }
-  .warn { color: #f59e0b; font-size: 11px; margin-left: 6px; }
   #toast {
     position: fixed; bottom: 20px; left: 50%;
     transform: translateX(-50%) translateY(100px);
@@ -175,7 +172,6 @@
   <div style="display:flex; align-items:center; flex-wrap:wrap; gap:6px;">
     <h1>🔍 Детектор повторов</h1>
     <span class="stats" id="stats"></span>
-    <span class="warn" id="stem-warn" style="display:none;">⚠️ упрощённый стеммер</span>
   </div>
   <div class="controls">
     <div class="slider-wrap">
@@ -211,136 +207,57 @@
 
 <script>
 /* ============================================================
-   SNOWBALL RUSSIAN STEMMER (встроенный)
+   СТЕММЕР: обрезает окончания + добавляет "обрубок" первых 5 букв
    ============================================================ */
-var RussianStemmer = function() {
-  var vowel = /[аеиоуыэюя]/;
-  var perfectiveground = /(ив|ивши|ившись|ыв|ывши|ывшись)$/;
-  var reflexive = /(с[яьи])$/;
-  var adjective = /(ими|ій|ый|ой|ий|ая|яя|ое|ее|ые|ие|ому|ему|ого|его|ому|ім|ым|им|ыми|ьми|ий|ій|ий|ой|ый|ого|ому|ыми|ых|іх|ых|ую|юю|ая|яя|ою|ею)$/;
-  var participle1 = /(ем|нн|вш|ющ|щ|ивш|ывш)$/;
-  var participle2 = /(ую|юю|ая|яя|ою|ею)$/;
-  var verb = /(ла|на|ете|йте|ли|й|л|ем|н|ло|но|ет|ют|ны|ть|ешь|нно|его|ему|ому|ій|ый|ой|ий|ая|яя|ое|ее|ые|ие|ому|его|ого|ему)$/;
-  var noun = /(а|ев|ов|е|иями|ями|ами|еи|ии|и|ией|ей|ой|ий|й|иям|ям|ием|ем|ам|ом|о|у|ах|иях|ях|ы|ь|ию|ью|ю|ия|ья|я)$/;
-  var superlative = /(ейш|ейше)$/;
-  var derivational = /(ост|ость)$/;
-  var i = /и$/;
-  var softsign = /ь$/;
 
-  function stemWord(word) {
-    var w = word.toLowerCase().replace(/ё/g, 'е');
-    if (w.length < 3) return w;
+// Основные русские окончания
+const RU_ENDINGS = [
+  'иями','иях','иям','ией','аться','яться','иться','еться','ываться',
+  'иваться','уется','ается','яется','ится','ется','ать','ять','ить',
+  'еть','уть','ыть','ает','яет','ует','ают','яют','уют','ала','яла',
+  'ила','ела','ула','ыла','али','яли','или','ели','ули','ыли','ал',
+  'ял','ил','ел','ул','ыл','аю','яю','ую','юю','ай','яй','уй','ой',
+  'ей','ая','яя','ое','ее','ые','ие','ый','ий','ым','им','ем','ом',
+  'ам','ям','ах','ях','ов','ев','ую','юю','ия','ие','ии','ями','ами',
+  'ость','ости','никам','никами','ников','ника','ником','нике','ники',
+  'у','ю','а','я','о','е','ы','и','й','ь'
+];
 
-    var RV = w.length;
-    for (var j = 0; j < w.length; j++) {
-      if (vowel.test(w[j])) {
-        var k = j + 1;
-        while (k < w.length && vowel.test(w[k])) k++;
-        if (k < w.length && !vowel.test(w[k])) {
-          RV = k + 1;
-          break;
-        }
-      }
-    }
-
-    var beforeRV = w.substring(0, RV);
-    var rv = w.substring(RV);
-
-    if (perfectiveground.test(rv)) {
-      rv = rv.replace(perfectiveground, '');
-    } else if (reflexive.test(rv)) {
-      rv = rv.replace(reflexive, '');
-      if (adjective.test(rv)) {
-        rv = rv.replace(adjective, '');
-        rv = rv.replace(participle1, '');
-      } else if (participle1.test(rv)) {
-        rv = rv.replace(participle1, '');
-        if (participle2.test(rv)) rv = rv.replace(participle2, '');
-      } else if (verb.test(rv)) {
-        rv = rv.replace(verb, '');
-      } else if (noun.test(rv)) {
-        rv = rv.replace(noun, '');
-      }
-    } else {
-      if (adjective.test(rv)) {
-        rv = rv.replace(adjective, '');
-        rv = rv.replace(participle1, '');
-      } else if (participle1.test(rv)) {
-        rv = rv.replace(participle1, '');
-        if (participle2.test(rv)) rv = rv.replace(participle2, '');
-      } else if (verb.test(rv)) {
-        rv = rv.replace(verb, '');
-      } else if (noun.test(rv)) {
-        rv = rv.replace(noun, '');
-      }
-    }
-
-    var result = beforeRV + rv;
-    if (i.test(result)) {
-      var rv2 = result.substring(RV);
-      if (rv2.length > 1) result = result.slice(0, -1);
-    }
-    if (softsign.test(result)) result = result.slice(0, -1);
-    return result;
-  }
-
-  return { stemWord: stemWord };
-};
-
-/* ============================================================
-   КЛЮЧИ СЛОВА: стемм + "обрубок" первых 5 букв
-   ============================================================ */
-// Обрубок ловит однокоренные слова разных частей речи:
-// «работники» → работ, «работали» → работ → совпадают.
-const STUB_LENGTH = 5;
-
-function getWordKeys(word) {
-  const lower = word.toLowerCase().replace(/ё/g, 'е');
-  const keys = new Set();
-
-  // 1) Полный стемм через Snowball
-  if (snowballStemmer) {
-    try {
-      const stem = snowballStemmer.stemWord(lower);
-      if (stem.length >= 3) keys.add(stem);
-    } catch (e) {}
-  }
-
-  // 2) Обрубок: первые 5 букв (если слово длиннее 5)
-  if (lower.length > STUB_LENGTH) {
-    keys.add('stub:' + lower.slice(0, STUB_LENGTH));
-  }
-
-  // 3) Fallback-стеммер (на случай, если Snowball не сработал)
-  if (keys.size === 0) {
-    keys.add(simpleRussianStem(lower));
-  }
-
-  return [...keys];
-}
-
-/* ============================================================
-   ВСТРОЕННЫЙ СТЕММЕР (fallback)
-   ============================================================ */
 function simpleRussianStem(word) {
   let w = word.toLowerCase().replace(/ё/g, 'е');
   if (w.length <= 4) return w;
-  const endings = [
-    'иями','иях','иям','ией','аться','яться','иться','еться','ываться',
-    'иваться','уется','ается','яется','ится','ется','ать','ять','ить',
-    'еть','уть','ыть','ает','яет','ует','ают','яют','уют','ала','яла',
-    'ила','ела','ула','ыла','али','яли','или','ели','ули','ыли','ал',
-    'ял','ил','ел','ул','ыл','аю','яю','ую','юю','ай','яй','уй','ой',
-    'ей','ая','яя','ое','ее','ые','ие','ый','ий','ым','им','ем','ом',
-    'ам','ям','ах','ях','ов','ев','ую','юю','ия','ие','ии','ями','ами',
-    'у','ю','а','я','о','е','ы','и','й','ь'
-  ];
-  for (const end of endings) {
+  for (const end of RU_ENDINGS) {
     if (w.length - end.length >= 4 && w.endsWith(end)) {
       return w.slice(0, -end.length);
     }
   }
   return w;
+}
+
+// Обрубок — первые N букв слова (без окончания)
+const STUB_LENGTH = 5;
+
+function getStub(word) {
+  const w = word.toLowerCase().replace(/ё/g, 'е');
+  if (w.length <= STUB_LENGTH) return w;
+  return 'stub:' + w.slice(0, STUB_LENGTH);
+}
+
+// Все ключи слова
+function getWordKeys(word) {
+  const lower = word.toLowerCase().replace(/ё/g, 'е');
+  const keys = new Set();
+
+  // 1) Полный стемм
+  const stem = simpleRussianStem(lower);
+  if (stem.length >= 3) keys.add(stem);
+
+  // 2) Обрубок (для однокоренных разных частей речи)
+  if (lower.length > STUB_LENGTH) {
+    keys.add(getStub(lower));
+  }
+
+  return [...keys];
 }
 
 /* ============================================================
@@ -359,7 +276,6 @@ function simpleRussianStem(word) {
   const popupList   = $('popup-list');
   const toastEl     = $('toast');
   const themeBtn    = $('btn-theme');
-  const stemWarn    = $('stem-warn');
   const distanceEl  = $('distance');
   const distanceVal = $('distance-val');
 
@@ -405,13 +321,6 @@ function simpleRussianStem(word) {
     const palette = theme === 'dark' ? COLORS_DARK : COLORS_LIGHT;
     return palette[index % palette.length];
   }
-
-  /* ============ СТЕММЕР ============ */
-  let snowballStemmer = null;
-  try {
-    snowballStemmer = RussianStemmer();
-  } catch (e) {}
-  if (!snowballStemmer) stemWarn.style.display = 'inline';
 
   /* ============ СТОП-СЛОВА ============ */
   const STOP_WORDS = new Set([
@@ -511,36 +420,26 @@ function simpleRussianStem(word) {
     const tokens = tokenize(text);
     currentTokens = tokens;
 
-    // Теперь у каждого слова МАССИВ ключей (стемм + обрубок).
-    // Ищем пересечения ключей между словами.
-    // keyToOccurrences: ключ → список вхождений { tokenIdx, word, keys }
+    // keyToOccurrences: ключ → список { tokenIdx }
     const keyToOccurrences = new Map();
 
     tokens.forEach((t, idx) => {
       if (t.type !== 'word') return;
-      if (t.text.length < 4) return;              // короче 4 букв не трогаем
+      if (t.text.length < 4) return;
       if (STOP_WORDS.has(t.text.toLowerCase())) return;
       if (t.isHeading) return;
       for (const key of t.keys) {
         if (!keyToOccurrences.has(key)) keyToOccurrences.set(key, []);
-        keyToOccurrences.get(key).push({ tokenIdx: idx, word: t.text, keys: t.keys });
+        keyToOccurrences.get(key).push({ tokenIdx: idx, word: t.text });
       }
     });
 
-    // Для каждого ключа — если встретился ≥2 раз на близком расстоянии,
-    // помечаем ВСЕ вхождения этого ключа как повтор.
-    // Одно слово может попасть в несколько пар — это ок.
+    // Помечаем токены, у которых есть близкий повтор по любому ключу
     const markedTokens = new Map(); // tokenIdx → Set<key>
-
-    function markToken(tokenIdx, key) {
-      if (!markedTokens.has(tokenIdx)) markedTokens.set(tokenIdx, new Set());
-      markedTokens.get(tokenIdx).add(key);
-    }
 
     for (const [key, occs] of keyToOccurrences) {
       if (occs.length < 2) continue;
 
-      // Ищем пары на расстоянии ≤ distance
       const closeIdx = new Set();
       for (let i = 0; i < occs.length; i++) {
         for (let j = i + 1; j < occs.length; j++) {
@@ -551,55 +450,48 @@ function simpleRussianStem(word) {
           }
         }
       }
+
       if (closeIdx.size >= 2) {
         for (const i of closeIdx) {
-          markToken(occs[i].tokenIdx, key);
+          const ti = occs[i].tokenIdx;
+          if (!markedTokens.has(ti)) markedTokens.set(ti, new Set());
+          markedTokens.get(ti).add(key);
         }
       }
     }
 
-    // Группируем помеченные токены по ключам в "пары" для панели
-    // Считаем: одна "пара" = один ключ, у которого ≥2 помеченных вхождений.
-    // Но чтобы не дублировать («работники» помечены ключами «работник» и «stub:работ»),
-    // объединяем вхождения по tokenIdx.
+    // Группируем помеченные токены в «пары» для панели
     const pairsFound = [];
-    const usedTokenIdxs = new Set();
+    const alreadyGrouped = new Set();
     let colorIdx = 0;
 
-    // Итерируем ключи в порядке появления
-    const sortedKeys = [...markedTokens.entries()]
-      .sort((a, b) => {
-        const aMin = Math.min(...a[1]);
-        return aMin - Math.min(...b[1]);
-      });
+    // Сортируем токены по позиции
+    const sortedTokenIdxs = [...markedTokens.keys()].sort((a, b) => a - b);
 
-    // Соберём уникальные группы: tokenIdx → keys[] уже есть.
-    // Для панели возьмём "главный" ключ (без stub:), если есть.
-    const alreadyGrouped = new Set();
-
-    for (const [tokenIdx, keys] of sortedKeys) {
+    for (const tokenIdx of sortedTokenIdxs) {
       if (alreadyGrouped.has(tokenIdx)) continue;
+      const keys = markedTokens.get(tokenIdx);
 
-      // Найдём все токены, связанные с этими ключами
+      // Собираем все токены, связанные любым из этих ключей
       const group = new Set([tokenIdx]);
       for (const k of keys) {
         const occs = keyToOccurrences.get(k) || [];
         for (const o of occs) group.add(o.tokenIdx);
       }
 
-      // Помечаем группу
       const groupArr = [...group].sort((a, b) => a - b);
       for (const g of groupArr) alreadyGrouped.add(g);
 
-      // Главный ключ для отображения
+      // Главный ключ (без stub:)
       let mainKey = null;
       for (const k of keys) {
         if (!k.startsWith('stub:')) { mainKey = k; break; }
       }
       if (!mainKey) mainKey = [...keys][0];
+      const displayStem = mainKey.replace(/^stub:/, '');
 
       pairsFound.push({
-        stem: mainKey.replace(/^stub:/, ''),
+        stem: displayStem,
         colorIndex: colorIdx++,
         occurrences: groupArr.map(idx => ({
           tokenIdx: idx,
@@ -610,7 +502,6 @@ function simpleRussianStem(word) {
 
     currentPairs = pairsFound;
 
-    // Карта tokenIdx → colorIndex
     const tokenToColor = new Map();
     pairsFound.forEach(p => {
       p.occurrences.forEach(o => tokenToColor.set(o.tokenIdx, p.colorIndex));
