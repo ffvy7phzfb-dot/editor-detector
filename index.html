@@ -189,7 +189,7 @@
 
 <div class="workspace">
   <div class="editor-pane">
-    <textarea id="input" placeholder="Вставь текст…">Мы пришли в магазин, в магазине было много сладостей. Кот сидел на окне. Кот смотрел на улицу. Собака бежала. Маша захотела вату. Собака лаяла.</textarea>
+    <textarea id="input" placeholder="Вставь текст…">Работники на заводе работали. Работники на заводе работали.</textarea>
     <div class="preview" id="preview"></div>
   </div>
   <aside class="side-pane">
@@ -207,11 +207,30 @@
 
 <script>
 /* ============================================================
-   ПРОСТОЙ СТЕММЕР (обрезает основные русские окончания)
+   УЛУЧШЕННЫЙ СТЕММЕР
+   Сначала отсекает словообразовательные суффиксы (-ник, -ость,
+   -ств и т.д.), потом — обычные окончания. Это даёт одинаковый
+   корень для слов "работники", "работали", "работник".
    ============================================================ */
 function simpleRussianStem(word) {
   let w = word.toLowerCase().replace(/ё/g, 'е');
   if (w.length <= 4) return w;
+
+  // 1. Словообразовательные суффиксы (длинные, идут сразу за корнем)
+  const derivational = [
+    'ированн','ирован','изаци','изац','ованн','ствова','ество','еств',
+    'ость','еск','ник','ниц','чик','щик','ств','тель','арь','ист',
+    'изм','аци','ени','анн','енн','онн','ущ','ющ','ащ','ящ',
+    'лив','чив','ив','ова','ева','ирова'
+  ];
+  for (const suf of derivational) {
+    if (w.endsWith(suf) && w.length - suf.length >= 3) {
+      w = w.slice(0, -suf.length);
+      break;
+    }
+  }
+
+  // 2. Обычные окончания
   const endings = [
     'иями','иях','иям','ией','аться','яться','иться','еться','ываться',
     'иваться','уется','ается','яется','ится','ется','ать','ять','ить',
@@ -223,7 +242,7 @@ function simpleRussianStem(word) {
     'у','ю','а','я','о','е','ы','и','й','ь'
   ];
   for (const end of endings) {
-    if (w.length - end.length >= 4 && w.endsWith(end)) {
+    if (w.length - end.length >= 3 && w.endsWith(end)) {
       return w.slice(0, -end.length);
     }
   }
@@ -390,38 +409,78 @@ function simpleRussianStem(word) {
     const tokens = tokenize(text);
     currentTokens = tokens;
 
-    const stemOccurrences = new Map();
+    // ---- 1. Разбиваем токены на предложения ----
+    const sentences = [];
+    let cur = { tokenIdxs: [], stemMap: new Map() };
+
     tokens.forEach((t, idx) => {
-      if (t.type !== 'word') return;
-      if (t.text.length < 3) return;
-      if (STOP_WORDS.has(t.text.toLowerCase())) return;
-      if (t.isHeading) return;
-      if (!stemOccurrences.has(t.stem)) stemOccurrences.set(t.stem, []);
-      stemOccurrences.get(t.stem).push({ tokenIdx: idx, word: t.text });
-    });
-
-    let colorIdx = 0;
-    const sortedStems = [...stemOccurrences.keys()].sort();
-    const pairsFound = [];
-
-    for (const stem of sortedStems) {
-      const occs = stemOccurrences.get(stem);
-      if (occs.length < 2) continue;
-
-      const closeOccs = new Set();
-      for (let i = 0; i < occs.length; i++) {
-        for (let j = i + 1; j < occs.length; j++) {
-          const wordDistance = countWordsBetween(tokens, occs[i].tokenIdx, occs[j].tokenIdx);
-          if (wordDistance <= distance) {
-            closeOccs.add(i);
-            closeOccs.add(j);
-          }
+      // Конец предложения — знак препинания .!?… или перенос строки
+      if (t.type === 'punct' && /[.!?…]/.test(t.text)) {
+        if (cur.tokenIdxs.length > 0) sentences.push(cur);
+        cur = { tokenIdxs: [], stemMap: new Map() };
+        return;
+      }
+      if (t.type === 'punct' && t.text === '\n') {
+        // Перенос строки тоже считаем границей предложения
+        if (cur.tokenIdxs.length > 0) sentences.push(cur);
+        cur = { tokenIdxs: [], stemMap: new Map() };
+        return;
+      }
+      if (t.type === 'word') {
+        cur.tokenIdxs.push(idx);
+        if (t.text.length >= 3 && !STOP_WORDS.has(t.text.toLowerCase()) && !t.isHeading) {
+          if (!cur.stemMap.has(t.stem)) cur.stemMap.set(t.stem, []);
+          cur.stemMap.get(t.stem).push(idx);
         }
       }
+    });
+    if (cur.tokenIdxs.length > 0) sentences.push(cur);
 
-      if (closeOccs.size >= 2) {
-        const finalOccs = [...closeOccs].sort((a, b) => a - b).map(i => occs[i]);
-        pairsFound.push({ stem, colorIndex: colorIdx++, occurrences: finalOccs });
+    // ---- 2. Ищем повторы ----
+    const pairsFound = [];
+    let colorIdx = 0;
+    const usedTokenIdxs = new Set(); // чтобы не красить одно слово дважды
+
+    // 2a. Внутри одного предложения — жёсткое расстояние
+    for (const sent of sentences) {
+      for (const [stem, idxs] of sent.stemMap) {
+        if (idxs.length < 2) continue;
+        const closeIdxs = filterByDistance(tokens, idxs, distance);
+        if (closeIdxs.length >= 2) {
+          pairsFound.push({
+            stem,
+            colorIndex: colorIdx++,
+            occurrences: closeIdxs.map(i => ({ tokenIdx: i, word: tokens[i].text }))
+          });
+          closeIdxs.forEach(i => usedTokenIdxs.add(i));
+        }
+      }
+    }
+
+    // 2b. Между соседними предложениями — мягкое расстояние (x2)
+    const softDistance = distance * 2;
+    for (let s = 0; s < sentences.length - 1; s++) {
+      const a = sentences[s];
+      const b = sentences[s + 1];
+      const allStems = new Set([...a.stemMap.keys(), ...b.stemMap.keys()]);
+      for (const stem of allStems) {
+        const idxsA = a.stemMap.get(stem) || [];
+        const idxsB = b.stemMap.get(stem) || [];
+        const allIdxs = [...idxsA, ...idxsB].sort((x, y) => x - y);
+        if (allIdxs.length < 2) continue;
+        const closeIdxs = filterByDistance(tokens, allIdxs, softDistance);
+        if (closeIdxs.length >= 2) {
+          // пропускаем, если все вхождения уже использованы
+          const fresh = closeIdxs.filter(i => !usedTokenIdxs.has(i));
+          if (fresh.length === 0) continue;
+          // объединяем с уже покрашенными того же стемма
+          pairsFound.push({
+            stem,
+            colorIndex: colorIdx++,
+            occurrences: closeIdxs.map(i => ({ tokenIdx: i, word: tokens[i].text }))
+          });
+          closeIdxs.forEach(i => usedTokenIdxs.add(i));
+        }
       }
     }
 
@@ -446,6 +505,22 @@ function simpleRussianStem(word) {
       if (tokens[i].type === 'word') count++;
     }
     return count;
+  }
+
+  // Оставляет только те индексы, между которыми <= distance слов.
+  // Если индекс ни с кем не сближается — отбрасывает его.
+  function filterByDistance(tokens, idxs, distance) {
+    if (idxs.length < 2) return idxs;
+    const keep = new Set();
+    for (let i = 0; i < idxs.length; i++) {
+      for (let j = i + 1; j < idxs.length; j++) {
+        if (countWordsBetween(tokens, idxs[i], idxs[j]) <= distance) {
+          keep.add(idxs[i]);
+          keep.add(idxs[j]);
+        }
+      }
+    }
+    return [...keep].sort((a, b) => a - b);
   }
 
   function renderPreview(tokens, tokenToColor) {
