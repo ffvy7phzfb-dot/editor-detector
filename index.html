@@ -3,9 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ai-redaktor</title>
+<title>✏️ ai-redaktor</title>
 
-<!-- Иконка-карандаш для вкладки -->
+<!-- Иконка-карандаш -->
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✏️</text></svg>">
 
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;800&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
@@ -52,7 +52,8 @@
   .btn-ghost { background: var(--input); color: var(--text); border: 1px solid var(--border); }
   .btn-ghost:hover { border-color: var(--accent); }
   .btn-yo { background: var(--yo-bg); color: var(--yo); border: 1px solid var(--yo); }
-  .btn-yo:hover { background: var(--yo); color: white; }
+  .btn-yo:hover:not(:disabled) { background: var(--yo); color: white; }
+  .btn-yo:disabled { opacity: 0.7; cursor: wait; }
   .btn-ok { background: var(--ok-bg); color: var(--ok); border: 1px solid var(--ok); }
   .btn-ok:hover { background: var(--ok); color: white; }
   .btn-err { background: transparent; color: var(--err); border: 1px solid var(--err); }
@@ -71,22 +72,49 @@
     border-radius: 2px;
   }
 
-  /* --- ТАЙМЕР --- */
-  #loading-box {
+  /* --- ПОЛНОЭКРАННЫЙ ТАЙМЕР (КАК В ПУНКТУАТОРЕ) --- */
+  #loading-overlay {
     display: none;
-    background: var(--input);
-    border-radius: 10px;
-    padding: 1rem;
-    margin-bottom: 1rem;
-    text-align: center;
-    font-weight: 600;
-    border: 1px solid var(--border);
+    position: fixed;
+    inset: 0;
+    background: rgba(11, 13, 20, 0.85); /* Тёмное затемнение */
+    backdrop-filter: blur(8px);
+    z-index: 1000;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    color: #fff;
   }
-  #loading-box.active { display: block; }
-  .loading-text { font-size: 0.95rem; margin-bottom: 0.5rem; color: var(--text); }
-  .loading-sub { font-size: 0.8rem; color: var(--muted); }
-  .loading-bar { height: 6px; background: rgba(0,0,0,0.1); border-radius: 3px; overflow: hidden; margin-top: 0.5rem; }
-  .loading-fill { height: 100%; background: var(--accent); width: 0%; transition: width 0.1s linear; }
+  #loading-overlay.active { display: flex; }
+  
+  /* Крутящееся кольцо */
+  .spinner {
+    width: 70px;
+    height: 70px;
+    border: 5px solid rgba(255, 255, 255, 0.1);
+    border-top-color: var(--accent2);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin-bottom: 25px;
+  }
+  @keyframes spin { 100% { transform: rotate(360deg); } }
+  
+  .loading-title {
+    font-size: 2rem;
+    font-weight: 800;
+    margin-bottom: 15px;
+    text-align: center;
+    letter-spacing: 1px;
+  }
+  .loading-sub {
+    font-size: 1.1rem;
+    color: #aaa;
+    text-align: center;
+  }
+  .loading-sub b {
+    color: var(--yo);
+    font-size: 1.4rem;
+  }
 
   .issue { background: var(--input); border: 1px solid var(--border); padding: 1rem; border-radius: 10px; margin-bottom: 0.5rem; }
   .issue-head { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 0.5rem; font-weight: 600; }
@@ -117,6 +145,13 @@
 
 <div class="glyphs" id="glyphs"></div>
 
+<!-- ТАЙМЕР НА ВЕСЬ ЭКРАН -->
+<div id="loading-overlay">
+  <div class="spinner"></div>
+  <div class="loading-title">Анализирую...</div>
+  <div class="loading-sub">Примерное время: <b><span id="time-left">3</span> сек.</b></div>
+</div>
+
 <div class="container">
   <header>
     <h1>Редактор</h1>
@@ -126,13 +161,6 @@
   <div class="card">
     <textarea id="text-input" placeholder="Вставьте текст сюда..."></textarea>
     
-    <!-- Блок таймера -->
-    <div id="loading-box">
-      <div class="loading-text">Идёт проверка текста...</div>
-      <div class="loading-sub">Осталось: <span id="time-left">3</span> сек.</div>
-      <div class="loading-bar"><div class="loading-fill" id="loading-fill"></div></div>
-    </div>
-
     <div class="counters">
       Символов: <b id="c-all">0</b> | Без пробелов: <b id="c-no-space">0</b> | Слов: <b id="c-words">0</b>
     </div>
@@ -231,17 +259,15 @@ let issues = [];
 let yoDict = [];
 let yoReady = false;
 
-// --- ТАЙМЕР ---
+// --- ТАЙМЕР (ПОЛНОЭКРАННЫЙ) ---
 let timerInterval = null;
-function startLoading(duration = 3) {
-  const box = document.getElementById('loading-box');
+function startLoading(duration = 4) {
+  const overlay = document.getElementById('loading-overlay');
   const timeLeft = document.getElementById('time-left');
-  const fill = document.getElementById('loading-fill');
   
-  box.classList.add('active');
+  overlay.classList.add('active');
   let remaining = duration;
   timeLeft.textContent = remaining;
-  fill.style.width = '0%';
 
   if (timerInterval) clearInterval(timerInterval);
 
@@ -250,18 +276,16 @@ function startLoading(duration = 3) {
     if (remaining <= 0) {
       remaining = 0;
       clearInterval(timerInterval);
-      box.classList.remove('active');
+      overlay.classList.remove('active');
     } else {
       timeLeft.textContent = Math.ceil(remaining);
-      const percent = ((duration - remaining) / duration) * 100;
-      fill.style.width = percent + '%';
     }
   }, 100);
 }
 
 function stopLoading() {
   if (timerInterval) clearInterval(timerInterval);
-  document.getElementById('loading-box').classList.remove('active');
+  document.getElementById('loading-overlay').classList.remove('active');
 }
 
 // --- ЗАГРУЗКА СЛОВАРЯ "Ё" ---
@@ -315,7 +339,7 @@ async function applyYo() {
   let text = inputEl.value;
   if (!text.trim()) return showToast('Введите текст');
   
-  startLoading(2.5);
+  startLoading(3);
   await new Promise(r => setTimeout(r, 50));
 
   let yoCount = 0;
@@ -475,10 +499,9 @@ function localChecks(text) {
   const rePunct = /\s+([,.!?;:])/g;
   while ((m = rePunct.exec(text))) push(m.index, m[0].length, m[0], 'Лишний пробел перед знаком', [m[1]], 'punct');
 
-  // ВАЖНО: защита от многоточия
   const reAfter = /([,.!?;:])(?=[А-Яа-яЁёA-Za-z])/g;
   while ((m = reAfter.exec(text))) {
-    if (m[1] === '.' && text[m.index + 1] === '.') continue; // многоточие — не ошибка
+    if (m[1] === '.' && text[m.index + 1] === '.') continue; // многоточие
     if (m[1] === ',' && /\d/.test(text[m.index - 1]) && /\d/.test(text[m.index + 1])) continue;
     push(m.index, 1, m[1], 'Нужен пробел после знака', [m[1] + ' '], 'punct');
   }
@@ -493,10 +516,10 @@ async function startCheck() {
 
   const btn = document.getElementById('btn-check');
   btn.disabled = true; 
-  btn.textContent = 'Проверяю...';
+  btn.textContent = 'Анализирую...';
   issues = [];
 
-  startLoading(3);
+  startLoading(4);
 
   try {
     const [yandexRes, ltRes] = await Promise.all([
