@@ -3,9 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ai-redaktor</title>
+<title>✏️ ai-redaktor</title>
 
-<!-- Иконка-карандаш -->
+<!-- Иконка-карандаш для вкладки -->
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✏️</text></svg>">
 
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;800&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
@@ -71,6 +71,23 @@
     border-radius: 2px;
   }
 
+  /* --- ТАЙМЕР --- */
+  #loading-box {
+    display: none;
+    background: var(--input);
+    border-radius: 10px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    text-align: center;
+    font-weight: 600;
+    border: 1px solid var(--border);
+  }
+  #loading-box.active { display: block; }
+  .loading-text { font-size: 0.95rem; margin-bottom: 0.5rem; color: var(--text); }
+  .loading-sub { font-size: 0.8rem; color: var(--muted); }
+  .loading-bar { height: 6px; background: rgba(0,0,0,0.1); border-radius: 3px; overflow: hidden; margin-top: 0.5rem; }
+  .loading-fill { height: 100%; background: var(--accent); width: 0%; transition: width 0.1s linear; }
+
   .issue { background: var(--input); border: 1px solid var(--border); padding: 1rem; border-radius: 10px; margin-bottom: 0.5rem; }
   .issue-head { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 0.5rem; font-weight: 600; }
   .word { color: var(--err); background: var(--err-bg); padding: 2px 6px; border-radius: 4px; font-family: 'JetBrains Mono', monospace; }
@@ -109,6 +126,13 @@
   <div class="card">
     <textarea id="text-input" placeholder="Вставьте текст сюда..."></textarea>
     
+    <!-- Блок таймера -->
+    <div id="loading-box">
+      <div class="loading-text">Идёт проверка текста...</div>
+      <div class="loading-sub">Осталось: <span id="time-left">3</span> сек.</div>
+      <div class="loading-bar"><div class="loading-fill" id="loading-fill"></div></div>
+    </div>
+
     <div class="counters">
       Символов: <b id="c-all">0</b> | Без пробелов: <b id="c-no-space">0</b> | Слов: <b id="c-words">0</b>
     </div>
@@ -207,6 +231,39 @@ let issues = [];
 let yoDict = [];
 let yoReady = false;
 
+// --- ТАЙМЕР ---
+let timerInterval = null;
+function startLoading(duration = 3) {
+  const box = document.getElementById('loading-box');
+  const timeLeft = document.getElementById('time-left');
+  const fill = document.getElementById('loading-fill');
+  
+  box.classList.add('active');
+  let remaining = duration;
+  timeLeft.textContent = remaining;
+  fill.style.width = '0%';
+
+  if (timerInterval) clearInterval(timerInterval);
+
+  timerInterval = setInterval(() => {
+    remaining -= 0.1;
+    if (remaining <= 0) {
+      remaining = 0;
+      clearInterval(timerInterval);
+      box.classList.remove('active');
+    } else {
+      timeLeft.textContent = Math.ceil(remaining);
+      const percent = ((duration - remaining) / duration) * 100;
+      fill.style.width = percent + '%';
+    }
+  }, 100);
+}
+
+function stopLoading() {
+  if (timerInterval) clearInterval(timerInterval);
+  document.getElementById('loading-box').classList.remove('active');
+}
+
 // --- ЗАГРУЗКА СЛОВАРЯ "Ё" ---
 async function loadYoDictionary() {
   try {
@@ -250,7 +307,7 @@ async function loadYoDictionary() {
 loadYoDictionary();
 
 // --- КНОПКА "ЁФИКАТОР" ---
-function applyYo() {
+async function applyYo() {
   if (!yoReady || yoDict.length === 0) {
     return showToast('Словарь ещё загружается');
   }
@@ -258,10 +315,12 @@ function applyYo() {
   let text = inputEl.value;
   if (!text.trim()) return showToast('Введите текст');
   
-  let yoCount = 0;
-  let highlightedText = text;
+  startLoading(2.5);
+  await new Promise(r => setTimeout(r, 50));
 
-  highlightedText = text.replace(/[А-Яа-яЁё]+/g, (match) => {
+  let yoCount = 0;
+
+  const highlightedText = text.replace(/[А-Яа-яЁё]+/g, (match) => {
     const lower = match.toLowerCase();
     if (lower.includes('ё')) return match; 
     
@@ -299,8 +358,10 @@ function applyYo() {
     document.getElementById('result-card').classList.remove('hidden');
     document.getElementById('issues-card').classList.add('hidden');
     
+    stopLoading();
     showToast(`Вставлено «ё»: ${yoCount}`);
   } else {
+    stopLoading();
     showToast('Слов с пропущенной «ё» не найдено');
   }
 }
@@ -365,13 +426,13 @@ function styleChecks(text) {
   };
   let m;
 
-  // 1. Слова-усилители (очень, слишком, реально, просто, вообще, прямо, буквально)
-  const amplifiers = /\b(очень|слишком|реально|просто|вообще|прямо|буквально|просто-таки)\b/gi;
+  // 1. Слова-усилители
+  const amplifiers = /\b(очень|слишком|реально|просто|вообще|прямо|буквально)\b/gi;
   while ((m = amplifiers.exec(text))) {
-    push(m.index, m[0].length, m[0], 'Слово-усилитель: можно убрать или заменить на более точное', ['', 'убрать'], 'grammar');
+    push(m.index, m[0].length, m[0], 'Слово-усилитель: можно убрать или заменить', ['убрать'], 'grammar');
   }
 
-  // 2. Звёздочки в начале строки (список) -> дефис
+  // 2. Звёздочки в начале строки -> дефис
   const reStar = /^(\s*)\*(\s+)/gm;
   while ((m = reStar.exec(text))) {
     const startIdx = m.index + m[1].length;
@@ -384,24 +445,11 @@ function styleChecks(text) {
     push(m.index, m[0].length, m[0], 'Лишние пробелы в конце строки', [''], 'space');
   }
 
-  // 4. Нет пустой строки между абзацами (после точки/знака, если дальше идёт текст без пустой строки)
-  // Ищем: знак препинания, перевод строки, и сразу текст (без ещё одного перевода строки)
+  // 4. Нет пустой строки между абзацами
   const reNoBlank = /([.!?])\n(?![ \t]*\n)([А-ЯЁA-Z«"])/g;
   while ((m = reNoBlank.exec(text))) {
     const startIdx = m.index + 1;
     push(startIdx, 1, '\n', 'Между абзацами нужна пустая строка', ['\n\n'], 'space');
-  }
-
-  // 5. Замена "СИЗы" на "средства индивидуальной защиты"
-  const reSIZ = /\bСИЗ(ы|ов|ам|ами|ах|ом|е|а)?\b/gi;
-  while ((m = reSIZ.exec(text))) {
-    push(m.index, m[0].length, m[0], 'Канцеляризм: лучше расшифровать', ['средства индивидуальной защиты'], 'grammar');
-  }
-
-  // 6. "в течении" -> "в течение" (если о времени)
-  const reVtechenii = /\bв\s+течении\b/gi;
-  while ((m = reVtechenii.exec(text))) {
-    push(m.index, m[0].length, m[0], 'Правильно: «в течение» (о времени)', ['в течение'], 'grammar');
   }
 
   return found;
@@ -421,15 +469,16 @@ function localChecks(text) {
   const reDec = /\d,\d+/g;
   while ((m = reDec.exec(text))) push(m.index, m[0].length, m[0], 'Десятичная дробь — через точку', [m[0].replace(',', '.')], 'punct');
 
-  const reSp = /[^\S\n]{2,}/g;
+  const reSp = / {2,}/g;
   while ((m = reSp.exec(text))) push(m.index, m[0].length, m[0], 'Лишние пробелы', [' '], 'space');
 
   const rePunct = /\s+([,.!?;:])/g;
   while ((m = rePunct.exec(text))) push(m.index, m[0].length, m[0], 'Лишний пробел перед знаком', [m[1]], 'punct');
 
+  // ВАЖНО: защита от многоточия
   const reAfter = /([,.!?;:])(?=[А-Яа-яЁёA-Za-z])/g;
   while ((m = reAfter.exec(text))) {
-    if (m[1] === '.' && text[m.index + 1] === '.') continue;
+    if (m[1] === '.' && text[m.index + 1] === '.') continue; // многоточие — не ошибка
     if (m[1] === ',' && /\d/.test(text[m.index - 1]) && /\d/.test(text[m.index + 1])) continue;
     push(m.index, 1, m[1], 'Нужен пробел после знака', [m[1] + ' '], 'punct');
   }
@@ -446,6 +495,8 @@ async function startCheck() {
   btn.disabled = true; 
   btn.textContent = 'Проверяю...';
   issues = [];
+
+  startLoading(3);
 
   try {
     const [yandexRes, ltRes] = await Promise.all([
@@ -472,10 +523,12 @@ async function startCheck() {
     issues = unique.map((iss, i) => ({ ...iss, id: i, status: 'pending' }));
     currentText = rawText;
 
+    stopLoading();
     render();
-    showToast(`Найдено: ${issues.length}`);
+    showToast(`Готово! Найдено: ${issues.length}`);
   } catch (e) {
     console.error(e);
+    stopLoading();
     showToast('Ошибка проверки');
   } finally {
     btn.disabled = false; 
@@ -505,7 +558,6 @@ function render() {
     if (issue.type === 'space') cls += ' space';
     if (issue.type === 'yo') cls += ' yo';
     
-    // Для пробелов в конце строки или пустых строк делаем видимую подсветку
     if (w.trim() === '' && w.length > 0) {
       html += `<span class="${cls}" style="background:rgba(239,68,68,0.3)">${'·'.repeat(w.length)}</span>`;
     } else {
