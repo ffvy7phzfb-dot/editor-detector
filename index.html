@@ -59,13 +59,12 @@
   .btn-err { background: transparent; color: var(--err); border: 1px solid var(--err); }
   .btn-err:hover { background: var(--err); color: white; }
 
-  /* Подсветка ошибок */
   .typo { background: var(--err-bg); border-bottom: 2px solid var(--err); padding: 1px 3px; border-radius: 3px; cursor: help; position: relative; }
   .typo.punct { background: var(--warn-bg); border-bottom-color: var(--warn); }
   .typo.space { background: rgba(99,102,241,0.2); border-bottom-color: var(--accent); }
   .typo.yo { background: var(--yo-bg); border-bottom-color: var(--yo); }
 
-  /* Красивая подсказка при наведении (вместо стандартного title) */
+  /* Тултип при наведении */
   .typo:hover::after {
     content: attr(data-tip);
     position: absolute;
@@ -84,12 +83,7 @@
     opacity: 0;
     transition: opacity 0.2s, transform 0.2s;
   }
-  .typo:hover::after {
-    opacity: 1;
-    transform: translateX(-50%) translateY(-10px);
-  }
-  
-  /* Стрелочка у подсказки */
+  .typo:hover::after { opacity: 1; transform: translateX(-50%) translateY(-10px); }
   .typo:hover::before {
     content: '';
     position: absolute;
@@ -102,9 +96,7 @@
     opacity: 0;
     transition: opacity 0.2s;
   }
-  .typo:hover::before {
-    opacity: 1;
-  }
+  .typo:hover::before { opacity: 1; }
 
   .inserted-yo {
     color: #f97316 !important;
@@ -234,7 +226,6 @@
   </div>
 </div>
 <div class="toast" id="toast"></div>
-
 <script>
 // --- ФОН ---
 (function() {
@@ -302,7 +293,7 @@ let yoReady = false;
 
 // --- ТАЙМЕР ---
 let timerInterval = null;
-function startLoading(duration = 3) {
+function startLoading(duration = 4) {
   const overlay = document.getElementById('loading-overlay');
   const timeLeft = document.getElementById('time-left');
   
@@ -491,22 +482,26 @@ function styleChecks(text) {
   };
   let m;
 
+  // 1. Слова-усилители
   const amplifiers = /\b(очень|слишком|реально|просто|вообще|прямо|буквально)\b/gi;
   while ((m = amplifiers.exec(text))) {
     push(m.index, m[0].length, m[0], 'Слово-усилитель: можно убрать или заменить', ['убрать'], 'grammar');
   }
 
+  // 2. Звёздочки в начале строки -> дефис
   const reStar = /^(\s*)\*(\s+)/gm;
   while ((m = reStar.exec(text))) {
     const startIdx = m.index + m[1].length;
     push(startIdx, 1, '*', 'Замените звёздочку в списке на дефис', ['-'], 'punct');
   }
 
+  // 3. Лишние пробелы в конце строки
   const reEndSpaces = /[ \t]+$/gm;
   while ((m = reEndSpaces.exec(text))) {
     push(m.index, m[0].length, m[0], 'Лишние пробелы в конце строки', [''], 'space');
   }
 
+  // 4. Нет пустой строки между абзацами
   const reNoBlank = /([.!?])\n(?![ \t]*\n)([А-ЯЁA-Z«"])/g;
   while ((m = reNoBlank.exec(text))) {
     const startIdx = m.index + 1;
@@ -530,12 +525,13 @@ function localChecks(text) {
   const reDec = /\d,\d+/g;
   while ((m = reDec.exec(text))) push(m.index, m[0].length, m[0], 'Десятичная дробь — через точку', [m[0].replace(',', '.')], 'punct');
 
-  const reSp = / {2,}/g;
+  const reSp = /[^\S\n]{2,}/g;
   while ((m = reSp.exec(text))) push(m.index, m[0].length, m[0], 'Лишние пробелы', [' '], 'space');
 
   const rePunct = /\s+([,.!?;:])/g;
   while ((m = rePunct.exec(text))) push(m.index, m[0].length, m[0], 'Лишний пробел перед знаком', [m[1]], 'punct');
 
+  // Защита от многоточия
   const reAfter = /([,.!?;:])(?=[А-Яа-яЁёA-Za-z])/g;
   while ((m = reAfter.exec(text))) {
     if (m[1] === '.' && text[m.index + 1] === '.') continue;
@@ -596,7 +592,7 @@ async function startCheck() {
   }
 }
 
-// --- РЕНДЕР (С ДОБАВЛЕННЫМ ТУЛТИПОМ) ---
+// --- РЕНДЕР (С ТУЛТИПАМИ) ---
 function render() {
   const rCard = document.getElementById('result-card');
   const iCard = document.getElementById('issues-card');
@@ -618,7 +614,6 @@ function render() {
     if (issue.type === 'space') cls += ' space';
     if (issue.type === 'yo') cls += ' yo';
     
-    // Подготавливаем текст для подсказки: убираем кавычки, чтобы не сломать HTML-атрибут
     const tipText = (issue.message || '').replace(/"/g, '&quot;');
     
     if (w.trim() === '' && w.length > 0) {
@@ -682,4 +677,35 @@ function accept(id) {
   if (!iss || iss.status !== 'pending') return;
   const val = document.getElementById('in-' + id).value.trim() || iss.replacements[0] || iss.word;
 
-  current
+  currentText = currentText.slice(0, iss.offset) + val + currentText.slice(iss.offset + iss.length);
+  iss.status = 'accepted';
+  render();
+}
+
+function reject(id) {
+  const iss = issues.find(i => i.id === id);
+  if (iss) iss.status = 'rejected';
+  render();
+}
+
+function acceptAll() {
+  const pending = issues.filter(i => i.status === 'pending').sort((a,b) => b.offset - a.offset);
+  for (const iss of pending) {
+    let val = iss.replacements[0] || iss.word;
+    const custom = document.getElementById('in-' + iss.id);
+    if (custom && custom.value.trim()) val = custom.value.trim();
+
+    currentText = currentText.slice(0, iss.offset) + val + currentText.slice(iss.offset + iss.length);
+    iss.status = 'accepted';
+  }
+  render();
+}
+
+function rejectAll() {
+  issues.forEach(i => { if (i.status === 'pending') i.status = 'rejected'; });
+  render();
+}
+
+function escapeHTML(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function escapeAttr(s) { return s.replace(/\\/g, '\\\\').replace(/'/g, "\\'"); }
+</script>
