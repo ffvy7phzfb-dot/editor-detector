@@ -3,7 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>✏️ ai-redaktor</title>
+<title>ai-redaktor</title>
+
+<!-- Иконка-карандаш для вкладки -->
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✏️</text></svg>">
+
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;800&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
 <style>
   :root {
@@ -59,7 +63,6 @@
   .typo.space { background: rgba(99,102,241,0.2); border-bottom-color: var(--accent); }
   .typo.yo { background: var(--yo-bg); border-bottom-color: var(--yo); }
 
-  /* Стиль для вставленной буквы ё */
   .inserted-yo {
     color: #f97316 !important;
     font-weight: 900;
@@ -283,31 +286,20 @@ function applyYo() {
         ? correct.charAt(0).toUpperCase() + correct.slice(1) 
         : correct;
       
-      // Оборачиваем в span для подсветки
-      // Но тут осторожно: если мы делаем это для выделения, то текст в textarea не изменится
-      // Нам нужно вернуть слово, чтобы его можно было потом вставить в скрытое поле.
       return resultWord;
     }
     return match;
   });
 
   if (yoCount > 0) {
-    // Обновляем скрытое поле (чтобы при копировании был чистый текст)
     inputEl.value = highlightedText;
     inputEl.dispatchEvent(new Event('input'));
     
-    // Показываем визуальный результат в блоке (с подсветкой)
     const resultDiv = document.getElementById('result-text');
     resultDiv.innerHTML = '';
     
-    // Проходим ещё раз, чтобы подсветить именно вставленные буквы
-    // (для этого проще использовать простую визуализацию)
     let visualHtml = highlightedText.replace(/[А-Яа-яЁё]+/g, (match) => {
        if (match.toLowerCase().includes('ё')) {
-         // Если в слове есть ё, и это слово есть в словаре (т.е. мы его только что заменили)
-         // Но нам нужно отличить "родную" ё от вставленной. Проще всего: проверить, было ли слово изменено.
-         // Для упрощения, просто подсветим ВСЕ слова с ё, которые есть в словаре
-         // Это может подсветить и те, что уже были, но зато видно, где ё.
          return `<span class="inserted-yo">${match}</span>`;
        }
        return match;
@@ -315,7 +307,7 @@ function applyYo() {
     
     resultDiv.innerHTML = visualHtml;
     document.getElementById('result-card').classList.remove('hidden');
-    document.getElementById('issues-card').classList.add('hidden'); // Прячем ошибки, чтобы не мешали
+    document.getElementById('issues-card').classList.add('hidden');
     
     showToast(`Вставлено «ё»: ${yoCount}`);
   } else {
@@ -323,7 +315,7 @@ function applyYo() {
   }
 }
 
-// --- ПРОВЕРКА ОШИБОК ---
+// --- ПРОВЕРКА ОШИБОК (БЕЗ "Ё") ---
 function localChecks(text) {
   const found = [];
   const push = (idx, len, word, message, replacements, type) => {
@@ -339,8 +331,8 @@ function localChecks(text) {
   const reDec = /\d,\d+/g;
   while ((m = reDec.exec(text))) push(m.index, m[0].length, m[0], 'Десятичная дробь — через точку', [m[0].replace(',', '.')], 'punct');
 
-  // 3. Двойные пробелы
-  const reSp = / {2,}/g;
+  // 3. Двойные пробелы (и более)
+  const reSp = /[^\S\n]{2,}/g;
   while ((m = reSp.exec(text))) push(m.index, m[0].length, m[0], 'Лишние пробелы', [' '], 'space');
 
   // 4. Пробел перед знаком
@@ -355,46 +347,22 @@ function localChecks(text) {
     push(m.index, 1, m[1], 'Нужен пробел после знака', [m[1] + ' '], 'punct');
   }
 
-  // 6. Ошибки из словаря (Ё)
-  if (yoReady && yoDict.length > 0) {
-    const reWord = /[А-Яа-яЁё]+/g;
-    while ((m = reWord.exec(text))) {
-      const w = m[0];
-      const lower = w.toLowerCase();
-      if (lower.includes('ё')) continue; 
-      if (yoDict.includes(lower)) {
-        // Нашли слово, которое есть в словаре как вариант с ё
-        const correct = findCorrectYoWord(lower);
-        if (correct) {
-          const cased = w[0] === w[0].toUpperCase() ? correct.charAt(0).toUpperCase() + correct.slice(1) : correct;
-          push(m.index, w.length, w, 'Пропущена буква «ё»', [cased], 'yo');
-        }
-      }
-    }
-  }
+  // ВАЖНО: блок проверки "ё" здесь удалён. Он теперь только в кнопке Ёфикатора.
 
   return found;
 }
 
-function findCorrectYoWord(wordWithoutYo) {
-  for (let i = 0; i < yoDict.length; i++) {
-    const dictWord = yoDict[i];
-    if (dictWord.includes('ё') && dictWord.replace(/ё/g, 'е') === wordWithoutYo) {
-      return dictWord;
-    }
-  }
-  return null;
-}
-
 // --- ГЛАВНАЯ ПРОВЕРКА ---
 async function startCheck() {
-  const rawText = inputEl.value.trim();
-  if (!rawText) return showToast('Введите текст');
+  // Берём текст напрямую из поля (чтобы всегда видеть актуальные пробелы)
+  const rawText = inputEl.value;
+  if (!rawText.trim()) return showToast('Введите текст');
 
   const btn = document.getElementById('btn-check');
   btn.disabled = true; btn.textContent = 'Проверяю...';
   issues = [];
 
+  // Ждём словарь, чтобы не было ошибок, но проверять "ё" здесь не будем
   if (!yoReady) {
     await new Promise(r => {
       const check = setInterval(() => {
@@ -428,7 +396,7 @@ async function startCheck() {
     console.error(e);
     showToast('Ошибка проверки');
   } finally {
-    btn.disabled = false; btn.textContent = 'Проверить (все)';
+    btn.disabled = false; btn.textContent = 'Проверить';
   }
 }
 
@@ -454,7 +422,6 @@ function render() {
     if (issue.type === 'space') cls += ' space';
     if (issue.type === 'yo') cls += ' yo';
     
-    // Если это ошибка "ё" — подсвечиваем красным (как ошибку)
     html += `<span class="${cls}">${escapeHTML(w)}</span>`;
     cursor = issue.offset + issue.length;
   }
