@@ -59,10 +59,52 @@
   .btn-err { background: transparent; color: var(--err); border: 1px solid var(--err); }
   .btn-err:hover { background: var(--err); color: white; }
 
-  .typo { background: var(--err-bg); border-bottom: 2px solid var(--err); padding: 1px 3px; border-radius: 3px; cursor: pointer; }
+  /* Подсветка ошибок */
+  .typo { background: var(--err-bg); border-bottom: 2px solid var(--err); padding: 1px 3px; border-radius: 3px; cursor: help; position: relative; }
   .typo.punct { background: var(--warn-bg); border-bottom-color: var(--warn); }
   .typo.space { background: rgba(99,102,241,0.2); border-bottom-color: var(--accent); }
   .typo.yo { background: var(--yo-bg); border-bottom-color: var(--yo); }
+
+  /* Красивая подсказка при наведении (вместо стандартного title) */
+  .typo:hover::after {
+    content: attr(data-tip);
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%) translateY(-5px);
+    background: #1f2937;
+    color: #fff;
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-size: 0.8rem;
+    white-space: nowrap;
+    z-index: 50;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.2s, transform 0.2s;
+  }
+  .typo:hover::after {
+    opacity: 1;
+    transform: translateX(-50%) translateY(-10px);
+  }
+  
+  /* Стрелочка у подсказки */
+  .typo:hover::before {
+    content: '';
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    border: 5px solid transparent;
+    border-top-color: #1f2937;
+    z-index: 51;
+    opacity: 0;
+    transition: opacity 0.2s;
+  }
+  .typo:hover::before {
+    opacity: 1;
+  }
 
   .inserted-yo {
     color: #f97316 !important;
@@ -72,12 +114,12 @@
     border-radius: 2px;
   }
 
-  /* --- ПОЛНОЭКРАННЫЙ ТАЙМЕР (КАК В ПУНКТУАТОРЕ) --- */
+  /* --- ПОЛНОЭКРАННЫЙ ТАЙМЕР --- */
   #loading-overlay {
     display: none;
     position: fixed;
     inset: 0;
-    background: rgba(11, 13, 20, 0.85); /* Тёмное затемнение */
+    background: rgba(11, 13, 20, 0.85);
     backdrop-filter: blur(8px);
     z-index: 1000;
     align-items: center;
@@ -87,7 +129,6 @@
   }
   #loading-overlay.active { display: flex; }
   
-  /* Крутящееся кольцо */
   .spinner {
     width: 70px;
     height: 70px;
@@ -259,9 +300,9 @@ let issues = [];
 let yoDict = [];
 let yoReady = false;
 
-// --- ТАЙМЕР (ПОЛНОЭКРАННЫЙ) ---
+// --- ТАЙМЕР ---
 let timerInterval = null;
-function startLoading(duration = 4) {
+function startLoading(duration = 3) {
   const overlay = document.getElementById('loading-overlay');
   const timeLeft = document.getElementById('time-left');
   
@@ -450,26 +491,22 @@ function styleChecks(text) {
   };
   let m;
 
-  // 1. Слова-усилители
   const amplifiers = /\b(очень|слишком|реально|просто|вообще|прямо|буквально)\b/gi;
   while ((m = amplifiers.exec(text))) {
     push(m.index, m[0].length, m[0], 'Слово-усилитель: можно убрать или заменить', ['убрать'], 'grammar');
   }
 
-  // 2. Звёздочки в начале строки -> дефис
   const reStar = /^(\s*)\*(\s+)/gm;
   while ((m = reStar.exec(text))) {
     const startIdx = m.index + m[1].length;
     push(startIdx, 1, '*', 'Замените звёздочку в списке на дефис', ['-'], 'punct');
   }
 
-  // 3. Лишние пробелы в конце строки
   const reEndSpaces = /[ \t]+$/gm;
   while ((m = reEndSpaces.exec(text))) {
     push(m.index, m[0].length, m[0], 'Лишние пробелы в конце строки', [''], 'space');
   }
 
-  // 4. Нет пустой строки между абзацами
   const reNoBlank = /([.!?])\n(?![ \t]*\n)([А-ЯЁA-Z«"])/g;
   while ((m = reNoBlank.exec(text))) {
     const startIdx = m.index + 1;
@@ -501,7 +538,7 @@ function localChecks(text) {
 
   const reAfter = /([,.!?;:])(?=[А-Яа-яЁёA-Za-z])/g;
   while ((m = reAfter.exec(text))) {
-    if (m[1] === '.' && text[m.index + 1] === '.') continue; // многоточие
+    if (m[1] === '.' && text[m.index + 1] === '.') continue;
     if (m[1] === ',' && /\d/.test(text[m.index - 1]) && /\d/.test(text[m.index + 1])) continue;
     push(m.index, 1, m[1], 'Нужен пробел после знака', [m[1] + ' '], 'punct');
   }
@@ -559,7 +596,7 @@ async function startCheck() {
   }
 }
 
-// --- РЕНДЕР ---
+// --- РЕНДЕР (С ДОБАВЛЕННЫМ ТУЛТИПОМ) ---
 function render() {
   const rCard = document.getElementById('result-card');
   const iCard = document.getElementById('issues-card');
@@ -581,10 +618,13 @@ function render() {
     if (issue.type === 'space') cls += ' space';
     if (issue.type === 'yo') cls += ' yo';
     
+    // Подготавливаем текст для подсказки: убираем кавычки, чтобы не сломать HTML-атрибут
+    const tipText = (issue.message || '').replace(/"/g, '&quot;');
+    
     if (w.trim() === '' && w.length > 0) {
-      html += `<span class="${cls}" style="background:rgba(239,68,68,0.3)">${'·'.repeat(w.length)}</span>`;
+      html += `<span class="${cls}" data-tip="${tipText}" style="background:rgba(239,68,68,0.3)">${'·'.repeat(w.length)}</span>`;
     } else {
-      html += `<span class="${cls}">${escapeHTML(w)}</span>`;
+      html += `<span class="${cls}" data-tip="${tipText}">${escapeHTML(w)}</span>`;
     }
     cursor = issue.offset + issue.length;
   }
@@ -642,37 +682,4 @@ function accept(id) {
   if (!iss || iss.status !== 'pending') return;
   const val = document.getElementById('in-' + id).value.trim() || iss.replacements[0] || iss.word;
 
-  currentText = currentText.slice(0, iss.offset) + val + currentText.slice(iss.offset + iss.length);
-  iss.status = 'accepted';
-  render();
-}
-
-function reject(id) {
-  const iss = issues.find(i => i.id === id);
-  if (iss) iss.status = 'rejected';
-  render();
-}
-
-function acceptAll() {
-  const pending = issues.filter(i => i.status === 'pending').sort((a,b) => b.offset - a.offset);
-  for (const iss of pending) {
-    let val = iss.replacements[0] || iss.word;
-    const custom = document.getElementById('in-' + iss.id);
-    if (custom && custom.value.trim()) val = custom.value.trim();
-
-    currentText = currentText.slice(0, iss.offset) + val + currentText.slice(iss.offset + iss.length);
-    iss.status = 'accepted';
-  }
-  render();
-}
-
-function rejectAll() {
-  issues.forEach(i => { if (i.status === 'pending') i.status = 'rejected'; });
-  render();
-}
-
-function escapeHTML(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
-function escapeAttr(s) { return s.replace(/\\/g, '\\\\').replace(/'/g, "\\'"); }
-</script>
-</body>
-</html>
+  current
