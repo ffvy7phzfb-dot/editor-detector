@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ai-redaktor</title>
+<title>✏️ ai-redaktor</title>
 
 <!-- Иконка-карандаш -->
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✏️</text></svg>">
@@ -305,7 +305,7 @@ function applyYo() {
   }
 }
 
-// --- ЯНДЕКС.СПЕЛЛЕР (Ловит опечатки, как в старом коде) ---
+// --- ЯНДЕКС.СПЕЛЛЕР ---
 async function checkYandex(text) {
   try {
     const response = await fetch('https://speller.yandex.net/services/spellservice.json/checkText', {
@@ -329,7 +329,7 @@ async function checkYandex(text) {
   }
 }
 
-// --- LANGUAGETOOL (Ловит грамматику) ---
+// --- LANGUAGETOOL ---
 async function checkLanguageTool(text) {
   try {
     const response = await fetch('https://api.languagetool.org/v2/check', {
@@ -357,7 +357,57 @@ async function checkLanguageTool(text) {
   }
 }
 
-// --- ЛОКАЛЬНЫЕ ПРАВИЛА (Пробелы и пунктуация) ---
+// --- СТИЛЬ И ОФОРМЛЕНИЕ ---
+function styleChecks(text) {
+  const found = [];
+  const push = (idx, len, word, message, replacements, type) => {
+    found.push({ offset: idx, length: len, word, message, replacements, source: 'Стиль', type: 'grammar' });
+  };
+  let m;
+
+  // 1. Слова-усилители (очень, слишком, реально, просто, вообще, прямо, буквально)
+  const amplifiers = /\b(очень|слишком|реально|просто|вообще|прямо|буквально|просто-таки)\b/gi;
+  while ((m = amplifiers.exec(text))) {
+    push(m.index, m[0].length, m[0], 'Слово-усилитель: можно убрать или заменить на более точное', ['', 'убрать'], 'grammar');
+  }
+
+  // 2. Звёздочки в начале строки (список) -> дефис
+  const reStar = /^(\s*)\*(\s+)/gm;
+  while ((m = reStar.exec(text))) {
+    const startIdx = m.index + m[1].length;
+    push(startIdx, 1, '*', 'Замените звёздочку в списке на дефис', ['-'], 'punct');
+  }
+
+  // 3. Лишние пробелы в конце строки
+  const reEndSpaces = /[ \t]+$/gm;
+  while ((m = reEndSpaces.exec(text))) {
+    push(m.index, m[0].length, m[0], 'Лишние пробелы в конце строки', [''], 'space');
+  }
+
+  // 4. Нет пустой строки между абзацами (после точки/знака, если дальше идёт текст без пустой строки)
+  // Ищем: знак препинания, перевод строки, и сразу текст (без ещё одного перевода строки)
+  const reNoBlank = /([.!?])\n(?![ \t]*\n)([А-ЯЁA-Z«"])/g;
+  while ((m = reNoBlank.exec(text))) {
+    const startIdx = m.index + 1;
+    push(startIdx, 1, '\n', 'Между абзацами нужна пустая строка', ['\n\n'], 'space');
+  }
+
+  // 5. Замена "СИЗы" на "средства индивидуальной защиты"
+  const reSIZ = /\bСИЗ(ы|ов|ам|ами|ах|ом|е|а)?\b/gi;
+  while ((m = reSIZ.exec(text))) {
+    push(m.index, m[0].length, m[0], 'Канцеляризм: лучше расшифровать', ['средства индивидуальной защиты'], 'grammar');
+  }
+
+  // 6. "в течении" -> "в течение" (если о времени)
+  const reVtechenii = /\bв\s+течении\b/gi;
+  while ((m = reVtechenii.exec(text))) {
+    push(m.index, m[0].length, m[0], 'Правильно: «в течение» (о времени)', ['в течение'], 'grammar');
+  }
+
+  return found;
+}
+
+// --- ЛОКАЛЬНЫЕ ПРАВИЛА ---
 function localChecks(text) {
   const found = [];
   const push = (idx, len, word, message, replacements, type) => {
@@ -398,17 +448,16 @@ async function startCheck() {
   issues = [];
 
   try {
-    // Запускаем ВСЕ проверки параллельно
     const [yandexRes, ltRes] = await Promise.all([
       checkYandex(rawText),
       checkLanguageTool(rawText)
     ]);
     
     const localRes = localChecks(rawText);
+    const styleRes = styleChecks(rawText);
     
-    let allIssues = [...yandexRes, ...ltRes, ...localRes];
+    let allIssues = [...yandexRes, ...ltRes, ...localRes, ...styleRes];
 
-    // Сортировка и удаление дублей
     allIssues.sort((a, b) => a.offset - b.offset);
     const seen = new Set();
     const unique = [];
@@ -434,7 +483,7 @@ async function startCheck() {
   }
 }
 
-// --- РЕНДЕР ДЛЯ ПРОВЕРКИ ---
+// --- РЕНДЕР ---
 function render() {
   const rCard = document.getElementById('result-card');
   const iCard = document.getElementById('issues-card');
@@ -456,7 +505,12 @@ function render() {
     if (issue.type === 'space') cls += ' space';
     if (issue.type === 'yo') cls += ' yo';
     
-    html += `<span class="${cls}">${escapeHTML(w)}</span>`;
+    // Для пробелов в конце строки или пустых строк делаем видимую подсветку
+    if (w.trim() === '' && w.length > 0) {
+      html += `<span class="${cls}" style="background:rgba(239,68,68,0.3)">${'·'.repeat(w.length)}</span>`;
+    } else {
+      html += `<span class="${cls}">${escapeHTML(w)}</span>`;
+    }
     cursor = issue.offset + issue.length;
   }
   html += escapeHTML(currentText.slice(cursor));
@@ -470,7 +524,7 @@ function render() {
 
   iList.innerHTML = active.map(iss => {
     const chips = iss.replacements.map(r =>
-      `<button class="sug" onclick="choose(${iss.id}, this, '${escapeAttr(r)}')">${escapeHTML(r)}</button>`
+      `<button class="sug" onclick="choose(${iss.id}, this, '${escapeAttr(r)}')">${escapeHTML(r || 'убрать')}</button>`
     ).join('');
 
     let wordCls = 'word';
@@ -478,11 +532,13 @@ function render() {
     if (iss.type === 'space') wordCls += ' space';
     if (iss.type === 'yo') wordCls += ' yo';
 
+    const displayWord = iss.word.trim() === '' ? '·'.repeat(iss.word.length) : iss.word;
+
     return `
       <div class="issue">
         <div class="issue-head">
           <span style="font-size:0.7rem; color:var(--muted)">${iss.source}</span>
-          <span class="${wordCls}">${escapeHTML(iss.word) || '...'}</span>
+          <span class="${wordCls}">${escapeHTML(displayWord) || '...'}</span>
         </div>
         <div class="msg">${escapeHTML(iss.message)}</div>
         <div class="suggestions">${chips}</div>
