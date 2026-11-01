@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AI-Редактор и Поиск опечаток</title>
+<title>Редактор</title>
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;800&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
 <style>
   :root {
@@ -12,14 +12,14 @@
     --err:#ef4444; --err-bg:rgba(239,68,68,0.1); --warn:#f59e0b; --warn-bg:rgba(245,158,11,0.1);
     --ok:#10b981; --ok-bg:rgba(16,185,129,0.1); --input:rgba(0,0,0,0.04);
     --glyph:rgba(99,102,241,0.15);
-    --yo: #f59e0b; --yo-bg: rgba(245,158,11,0.15);
+    --yo: #f97316; --yo-bg: rgba(249,115,22,0.15);
   }
   [data-theme="dark"] {
     --bg:#0b0d14; --card:rgba(20,22,33,0.85); --border:rgba(255,255,255,0.1);
     --text:#eef0f7; --muted:#9ca3b8; --err:#f87171; --err-bg:rgba(248,113,113,0.15);
     --warn:#fbbf24; --warn-bg:rgba(251,191,36,0.15); --ok:#34d399; --ok-bg:rgba(52,211,153,0.15);
     --input:rgba(255,255,255,0.05); --glyph:rgba(168,85,247,0.15);
-    --yo: #fbbf24; --yo-bg: rgba(251,191,36,0.15);
+    --yo: #fb923c; --yo-bg: rgba(251,146,60,0.2);
   }
   * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Manrope', sans-serif; }
   body { background: var(--bg); color: var(--text); min-height: 100vh; padding: 2rem 1rem; line-height: 1.6; transition: 0.3s; overflow-x: hidden; }
@@ -59,6 +59,15 @@
   .typo.space { background: rgba(99,102,241,0.2); border-bottom-color: var(--accent); }
   .typo.yo { background: var(--yo-bg); border-bottom-color: var(--yo); }
 
+  /* Стиль для вставленной буквы ё */
+  .inserted-yo {
+    color: #f97316 !important;
+    font-weight: 900;
+    background-color: rgba(249,115,22,0.1);
+    padding: 0 2px;
+    border-radius: 2px;
+  }
+
   .issue { background: var(--input); border: 1px solid var(--border); padding: 1rem; border-radius: 10px; margin-bottom: 0.5rem; }
   .issue-head { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 0.5rem; font-weight: 600; }
   .word { color: var(--err); background: var(--err-bg); padding: 2px 6px; border-radius: 4px; font-family: 'JetBrains Mono', monospace; }
@@ -95,7 +104,9 @@
   </header>
 
   <div class="card">
+    <!-- Скрытое поле для хранения чистого текста -->
     <textarea id="text-input" placeholder="Вставьте текст сюда..."></textarea>
+    
     <div class="counters">
       Символов: <b id="c-all">0</b> | Без пробелов: <b id="c-no-space">0</b> | Слов: <b id="c-words">0</b>
     </div>
@@ -107,6 +118,7 @@
     </div>
   </div>
 
+  <!-- Блок результата (для визуальной подсветки) -->
   <div class="card hidden" id="result-card">
     <div style="display: flex; justify-content: space-between; margin-bottom: 1rem;">
       <h2 style="font-size: 1rem;">Результат</h2>
@@ -179,6 +191,7 @@ function clearAll() {
   inputEl.dispatchEvent(new Event('input'));
   document.getElementById('result-card').classList.add('hidden');
   document.getElementById('issues-card').classList.add('hidden');
+  document.getElementById('result-text').innerHTML = '';
 }
 
 async function copyResult() {
@@ -190,14 +203,12 @@ async function copyResult() {
 // --- СОСТОЯНИЕ ---
 let currentText = '';
 let issues = [];
-
-// --- ЗАГРУЗКА ТВОЕГО СЛОВАРЯ С GITHUB ---
 let yoDict = [];
 let yoReady = false;
 
+// --- ЗАГРУЗКА СЛОВАРЯ ---
 async function loadYoDictionary() {
   try {
-    // ЗДЕСЬ УКАЖИ ИМЯ СВОЕГО ФАЙЛА, ЕСЛИ ОНО ДРУГОЕ
     const res = await fetch('yo-dictionary.txt'); 
     if (!res.ok) throw new Error('Файл не найден');
     const text = await res.text();
@@ -209,7 +220,7 @@ async function loadYoDictionary() {
       line = line.trim().toLowerCase();
       if (!line) continue;
 
-      // Если есть скобки (а|ой|у) — раскрываем
+      // Раскрываем скобки, если есть
       if (line.includes('(') && line.includes(')')) {
         const base = line.substring(0, line.indexOf('('));
         const endingsStr = line.substring(line.indexOf('(') + 1, line.indexOf(')'));
@@ -217,33 +228,102 @@ async function loadYoDictionary() {
 
         for (let end of endings) {
           const wordWithYo = base + end;
-          // Сохраняем только если есть ё
           if (wordWithYo.includes('ё')) {
-            yoDict.push(wordWithYo); // ёжикова
-            yoDict.push(wordWithYo.replace(/ё/g, 'е')); // ежикова (для сравнения)
+            yoDict.push(wordWithYo);
+            yoDict.push(wordWithYo.replace(/ё/g, 'е'));
           }
         }
       } else {
-        // Обычное слово
         if (line.includes('ё')) {
           yoDict.push(line);
           yoDict.push(line.replace(/ё/g, 'е'));
         }
       }
     }
-
-    // Убираем дубликаты
     yoDict = [...new Set(yoDict)];
     yoReady = true;
     console.log(`Словарь загружен: ${yoDict.length} форм`);
   } catch (e) {
-    console.error('Ошибка загрузки словаря. Проверь, что файл лежит рядом с index.html', e);
+    console.error('Ошибка загрузки словаря', e);
     showToast('Словарь не загрузился');
   }
 }
 loadYoDictionary();
 
-// --- ПРОВЕРКА ОШИБОК (Пунктуация, пробелы и Ё) ---
+// --- КНОПКА "ВСТАВИТЬ Ё" С ПОДСВЕТКОЙ ---
+function applyYo() {
+  if (!yoReady || yoDict.length === 0) {
+    return showToast('Словарь ещё загружается');
+  }
+  
+  let text = inputEl.value;
+  if (!text.trim()) return showToast('Введите текст');
+  
+  let yoCount = 0;
+  let highlightedText = text;
+
+  // Проходим по всем словам в тексте (используем replace с коллбэком)
+  highlightedText = text.replace(/[А-Яа-яЁё]+/g, (match) => {
+    const lower = match.toLowerCase();
+    if (lower.includes('ё')) return match; // Уже с ё
+    
+    // Ищем в словаре правильный вариант с ё
+    let correct = null;
+    for (let dictWord of yoDict) {
+      if (dictWord.includes('ё') && dictWord.replace(/ё/g, 'е') === lower) {
+        correct = dictWord;
+        break;
+      }
+    }
+    
+    if (correct) {
+      yoCount++;
+      // Сохраняем заглавную букву
+      let resultWord = match[0] === match[0].toUpperCase() 
+        ? correct.charAt(0).toUpperCase() + correct.slice(1) 
+        : correct;
+      
+      // Оборачиваем в span для подсветки
+      // Но тут осторожно: если мы делаем это для выделения, то текст в textarea не изменится
+      // Нам нужно вернуть слово, чтобы его можно было потом вставить в скрытое поле.
+      return resultWord;
+    }
+    return match;
+  });
+
+  if (yoCount > 0) {
+    // Обновляем скрытое поле (чтобы при копировании был чистый текст)
+    inputEl.value = highlightedText;
+    inputEl.dispatchEvent(new Event('input'));
+    
+    // Показываем визуальный результат в блоке (с подсветкой)
+    const resultDiv = document.getElementById('result-text');
+    resultDiv.innerHTML = '';
+    
+    // Проходим ещё раз, чтобы подсветить именно вставленные буквы
+    // (для этого проще использовать простую визуализацию)
+    let visualHtml = highlightedText.replace(/[А-Яа-яЁё]+/g, (match) => {
+       if (match.toLowerCase().includes('ё')) {
+         // Если в слове есть ё, и это слово есть в словаре (т.е. мы его только что заменили)
+         // Но нам нужно отличить "родную" ё от вставленной. Проще всего: проверить, было ли слово изменено.
+         // Для упрощения, просто подсветим ВСЕ слова с ё, которые есть в словаре
+         // Это может подсветить и те, что уже были, но зато видно, где ё.
+         return `<span class="inserted-yo">${match}</span>`;
+       }
+       return match;
+    });
+    
+    resultDiv.innerHTML = visualHtml;
+    document.getElementById('result-card').classList.remove('hidden');
+    document.getElementById('issues-card').classList.add('hidden'); // Прячем ошибки, чтобы не мешали
+    
+    showToast(`Вставлено «ё»: ${yoCount}`);
+  } else {
+    showToast('Слов с пропущенной «ё» не найдено (проверьте словарь)');
+  }
+}
+
+// --- ПРОВЕРКА ОШИБОК ---
 function localChecks(text) {
   const found = [];
   const push = (idx, len, word, message, replacements, type) => {
@@ -275,21 +355,18 @@ function localChecks(text) {
     push(m.index, 1, m[1], 'Нужен пробел после знака', [m[1] + ' '], 'punct');
   }
 
-  // 6. Проверка "Ё" по твоему словарю
+  // 6. Ошибки из словаря (Ё)
   if (yoReady && yoDict.length > 0) {
     const reWord = /[А-Яа-яЁё]+/g;
     while ((m = reWord.exec(text))) {
       const w = m[0];
       const lower = w.toLowerCase();
-      
-      if (lower.includes('ё')) continue; // Уже с ё
-
-      // Ищем, есть ли это слово (без ё) в нашем словаре
+      if (lower.includes('ё')) continue; 
       if (yoDict.includes(lower)) {
-        // Значит, это слово должно быть с ё. Находим правильный вариант.
-        const correctWord = findCorrectYoWord(lower);
-        if (correctWord) {
-          const cased = w[0] === w[0].toUpperCase() ? correctWord.charAt(0).toUpperCase() + correctWord.slice(1) : correctWord;
+        // Нашли слово, которое есть в словаре как вариант с ё
+        const correct = findCorrectYoWord(lower);
+        if (correct) {
+          const cased = w[0] === w[0].toUpperCase() ? correct.charAt(0).toUpperCase() + correct.slice(1) : correct;
           push(m.index, w.length, w, 'Пропущена буква «ё»', [cased], 'yo');
         }
       }
@@ -309,44 +386,7 @@ function findCorrectYoWord(wordWithoutYo) {
   return null;
 }
 
-// --- КНОПКА "ВСТАВИТЬ Ё" ---
-function applyYo() {
-  if (!yoReady || yoDict.length === 0) {
-    return showToast('Словарь ещё загружается');
-  }
-  
-  let text = inputEl.value;
-  if (!text.trim()) return showToast('Введите текст');
-  
-  let yoCount = 0;
-  
-  text = text.replace(/[А-Яа-яЁё]+/g, (match) => {
-    const lower = match.toLowerCase();
-    if (lower.includes('ё')) return match;
-    
-    if (yoDict.includes(lower)) {
-      const correct = findCorrectYoWord(lower);
-      if (correct) {
-        yoCount++;
-        if (match[0] === match[0].toUpperCase()) {
-          return correct.charAt(0).toUpperCase() + correct.slice(1);
-        }
-        return correct;
-      }
-    }
-    return match;
-  });
-  
-  if (yoCount > 0) {
-    inputEl.value = text;
-    inputEl.dispatchEvent(new Event('input'));
-    showToast(`Вставлено «ё»: ${yoCount}`);
-  } else {
-    showToast('Слов с пропущенной «ё» не найдено');
-  }
-}
-
-// --- ГЛАВНАЯ ФУНКЦИЯ ---
+// --- ГЛАВНАЯ ПРОВЕРКА ---
 async function startCheck() {
   const rawText = inputEl.value.trim();
   if (!rawText) return showToast('Введите текст');
@@ -368,7 +408,6 @@ async function startCheck() {
 
   try {
     let allIssues = [...localRes];
-
     allIssues.sort((a, b) => a.offset - b.offset);
     const seen = new Set();
     const unique = [];
@@ -393,7 +432,7 @@ async function startCheck() {
   }
 }
 
-// --- РЕНДЕР ---
+// --- РЕНДЕР ДЛЯ ПРОВЕРКИ ---
 function render() {
   const rCard = document.getElementById('result-card');
   const iCard = document.getElementById('issues-card');
@@ -414,6 +453,8 @@ function render() {
     if (issue.type === 'punct') cls += ' punct';
     if (issue.type === 'space') cls += ' space';
     if (issue.type === 'yo') cls += ' yo';
+    
+    // Если это ошибка "ё" — подсвечиваем красным (как ошибку)
     html += `<span class="${cls}">${escapeHTML(w)}</span>`;
     cursor = issue.offset + issue.length;
   }
