@@ -1,0 +1,642 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI-Редактор</title>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;800&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:#f6f7fb; --card:rgba(255,255,255,0.85); --border:rgba(0,0,0,0.08);
+    --text:#14161f; --muted:#6b7280; --accent:#6366f1; --accent2:#a855f7;
+    --err:#ef4444; --err-bg:rgba(239,68,68,0.1); --warn:#f59e0b; --warn-bg:rgba(245,158,11,0.1);
+    --ok:#10b981; --ok-bg:rgba(16,185,129,0.1); --input:rgba(0,0,0,0.04);
+    --glyph:rgba(99,102,241,0.15);
+  }
+  [data-theme="dark"] {
+    --bg:#0b0d14; --card:rgba(20,22,33,0.85); --border:rgba(255,255,255,0.1);
+    --text:#eef0f7; --muted:#9ca3b8; --err:#f87171; --err-bg:rgba(248,113,113,0.15);
+    --warn:#fbbf24; --warn-bg:rgba(251,191,36,0.15); --ok:#34d399; --ok-bg:rgba(52,211,153,0.15);
+    --input:rgba(255,255,255,0.05); --glyph:rgba(168,85,247,0.15);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Manrope', sans-serif; }
+  body { background: var(--bg); color: var(--text); min-height: 100vh; padding: 2rem 1rem; line-height: 1.6; transition: 0.3s; overflow-x: hidden; }
+
+  .glyphs { position: fixed; inset: 0; z-index: -1; pointer-events: none; overflow: hidden; }
+  .glyph { position: absolute; font-family: 'JetBrains Mono', monospace; font-weight: 800; color: var(--glyph); user-select: none; animation: drift 25s linear infinite; }
+  @keyframes drift { 0% { transform: translateY(0) rotate(0); opacity: 0; } 10%, 90% { opacity: 1; } 100% { transform: translateY(-120vh) rotate(180deg); opacity: 0; } }
+
+  .container { max-width: 800px; margin: 0 auto; position: relative; }
+  header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; }
+  h1 { font-size: 1.2rem; font-weight: 800; }
+  .btn-theme { background: var(--card); border: 1px solid var(--border); color: var(--text); padding: 0.5rem 0.8rem; border-radius: 10px; cursor: pointer; font-size: 1.2rem; }
+
+  .card { background: var(--card); backdrop-filter: blur(10px); border: 1px solid var(--border); border-radius: 16px; padding: 1.5rem; margin-bottom: 1rem; box-shadow: 0 10px 30px -10px rgba(0,0,0,0.1); }
+  textarea { width: 100%; height: 200px; background: var(--input); border: 1px solid var(--border); border-radius: 10px; padding: 1rem; color: var(--text); font-size: 1rem; resize: vertical; outline: none; margin-bottom: 1rem; transition: 0.2s; }
+  textarea:focus { border-color: var(--accent); }
+
+  .counters { display: flex; gap: 1rem; font-size: 0.85rem; color: var(--muted); margin-bottom: 1rem; flex-wrap: wrap; }
+  .counters b { color: var(--text); }
+
+  .toolbar { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+  .btn { border: none; border-radius: 8px; padding: 0.6rem 1rem; font-weight: 600; cursor: pointer; font-size: 0.9rem; transition: 0.2s; display: flex; align-items: center; gap: 0.4rem; }
+  .btn-primary { background: var(--accent); color: white; }
+  .btn-primary:hover:not(:disabled) { background: var(--accent2); }
+  .btn-primary:disabled { opacity: 0.7; cursor: wait; }
+  .btn-ghost { background: var(--input); color: var(--text); border: 1px solid var(--border); }
+  .btn-ghost:hover { border-color: var(--accent); }
+  .btn-ok { background: var(--ok-bg); color: var(--ok); border: 1px solid var(--ok); }
+  .btn-ok:hover { background: var(--ok); color: white; }
+  .btn-err { background: transparent; color: var(--err); border: 1px solid var(--err); }
+  .btn-err:hover { background: var(--err); color: white; }
+
+  .typo { background: var(--err-bg); border-bottom: 2px solid var(--err); padding: 1px 3px; border-radius: 3px; cursor: pointer; }
+  .typo.punct { background: var(--warn-bg); border-bottom-color: var(--warn); }
+  .typo.space { background: rgba(99,102,241,0.2); border-bottom-color: var(--accent); }
+
+  .issue { background: var(--input); border: 1px solid var(--border); padding: 1rem; border-radius: 10px; margin-bottom: 0.5rem; }
+  .issue-head { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 0.5rem; font-weight: 600; }
+  .word { color: var(--err); background: var(--err-bg); padding: 2px 6px; border-radius: 4px; font-family: 'JetBrains Mono', monospace; }
+  .word.punct { color: var(--warn); background: var(--warn-bg); }
+  .word.space { color: var(--accent); background: rgba(99,102,241,0.15); }
+  .msg { font-size: 0.85rem; color: var(--muted); margin-bottom: 0.5rem; }
+
+  .suggestions { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-bottom: 0.5rem; }
+  .sug { background: var(--card); border: 1px solid var(--border); padding: 0.3rem 0.6rem; border-radius: 6px; cursor: pointer; font-size: 0.85rem; color: var(--text); transition: 0.1s; }
+  .sug:hover { border-color: var(--accent); }
+  .sug.active { background: var(--ok); color: white; border-color: var(--ok); }
+
+  .custom-input { width: 100%; padding: 0.4rem; border-radius: 6px; border: 1px solid var(--border); background: var(--card); color: var(--text); margin-bottom: 0.5rem; }
+  .custom-input:focus { border-color: var(--accent); outline: none; }
+  .actions { display: flex; gap: 0.5rem; }
+
+  .progress { height: 6px; background: var(--input); border-radius: 3px; margin-top: 1rem; overflow: hidden; }
+  .progress-bar { height: 100%; background: var(--accent); width: 0%; transition: 0.3s; }
+
+  .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%) translateY(100px); background: var(--text); color: var(--bg); padding: 0.6rem 1.2rem; border-radius: 8px; font-weight: 600; transition: 0.3s; opacity: 0; z-index: 100; }
+  .toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<div class="glyphs" id="glyphs"></div>
+
+<div class="container">
+  <header>
+    <h1>AI-редактор</h1>
+    <button class="btn-theme" onclick="toggleTheme()">🌓</button>
+  </header>
+
+  <div class="card">
+    <textarea id="text-input" placeholder="Вставьте текст сюда..."></textarea>
+    <div class="counters">
+      Символов: <b id="c-all">0</b> | Без пробелов: <b id="c-no-space">0</b> | Слов: <b id="c-words">0</b>
+    </div>
+    <div class="toolbar">
+      <button class="btn btn-primary" onclick="startCheck()" id="btn-check">Проверить</button>
+      <button class="btn btn-ghost" onclick="pasteText()">Вставить</button>
+      <button class="btn btn-ghost" onclick="clearAll()">Очистить</button>
+    </div>
+  </div>
+
+  <div class="card hidden" id="result-card">
+    <div style="display: flex; justify-content: space-between; margin-bottom: 1rem;">
+      <h2 style="font-size: 1rem;">Результат</h2>
+      <button class="btn btn-ghost" onclick="copyResult()" style="padding: 0.3rem 0.6rem; font-size: 0.8rem;">🔗</button>
+    </div>
+    <div id="result-text" style="font-size: 1rem; line-height: 1.8; white-space: pre-wrap; word-wrap: break-word;"></div>
+  </div>
+
+  <div class="card hidden" id="issues-card">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+      <h2 style="font-size: 1rem;">Найдено ошибок</h2>
+      <div class="actions">
+        <button class="btn btn-ok" onclick="acceptAll()">Принять всё</button>
+        <button class="btn btn-err" onclick="rejectAll()">Отклонить всё</button>
+      </div>
+    </div>
+    <div class="progress"><div class="progress-bar" id="progress-bar"></div></div>
+    <div id="issues-list" style="margin-top: 1rem;"></div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<!-- Hunspell движок (WebAssembly) -->
+<script src="https://cdn.jsdelivr.net/npm/hunspell-asm@4.0.2/dist/cjs/lib/browser/hunspell.js"></script>
+
+<script>
+// --- ФОН ---
+(function() {
+  const chars = ['А','Б','В','Г','Д','!','?','.',',','Я','Ю','Ф','#','*'];
+  const p = document.getElementById('glyphs');
+  for (let i = 0; i < 20; i++) {
+    const el = document.createElement('span');
+    el.className = 'glyph';
+    el.textContent = chars[Math.floor(Math.random() * chars.length)];
+    el.style.left = Math.random() * 100 + '%';
+    el.style.top = (100 + Math.random() * 50) + '%';
+    el.style.fontSize = (Math.random() * 40 + 20) + 'px';
+    el.style.animationDuration = (15 + Math.random() * 20) + 's';
+    el.style.animationDelay = (-Math.random() * 20) + 's';
+    p.appendChild(el);
+  }
+})();
+
+// --- HUNSPELL ЗАГРУЗКА ---
+let hunspell = null;
+let hunspellReady = false;
+
+async function initHunspell() {
+  try {
+    await new Promise((resolve) => {
+      const check = setInterval(() => {
+        if (window.Module && window.Module.loadModule) {
+          clearInterval(check);
+          resolve();
+        }
+      }, 100);
+      setTimeout(() => { clearInterval(check); resolve(); }, 10000);
+    });
+
+    const factory = await window.Module.loadModule();
+    const encoder = new TextEncoder();
+
+    const dictBase = 'https://cdn.jsdelivr.net/npm/dictionary-ru@3.0.0';
+    const [aff, dic] = await Promise.all([
+      fetch(`${dictBase}/index.aff`).then(r => r.text()),
+      fetch(`${dictBase}/index.dic`).then(r => r.text()),
+    ]);
+
+    const affPath = factory.mountBuffer(encoder.encode(aff), 'ru.aff');
+    const dicPath = factory.mountBuffer(encoder.encode(dic), 'ru.dic');
+    hunspell = factory.create(affPath, dicPath);
+    hunspellReady = true;
+    console.log('Hunspell готов!');
+  } catch (e) {
+    console.error('Ошибка загрузки Hunspell:', e);
+  }
+}
+initHunspell();
+
+// --- ТЕМА И СЧЕТЧИКИ ---
+function toggleTheme() {
+  const html = document.documentElement;
+  html.setAttribute('data-theme', html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
+}
+const inputEl = document.getElementById('text-input');
+inputEl.addEventListener('input', () => {
+  const t = inputEl.value;
+  document.getElementById('c-all').textContent = t.length;
+  document.getElementById('c-no-space').textContent = t.replace(/\s/g, '').length;
+  document.getElementById('c-words').textContent = t.trim() ? t.trim().split(/\s+/).length : 0;
+});
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2000);
+}
+
+async function pasteText() {
+  try {
+    const t = await navigator.clipboard.readText();
+    inputEl.value = t;
+    inputEl.dispatchEvent(new Event('input'));
+  } catch (e) { showToast('Нет доступа к буферу'); }
+}
+
+function clearAll() {
+  inputEl.value = '';
+  inputEl.dispatchEvent(new Event('input'));
+  document.getElementById('result-card').classList.add('hidden');
+  document.getElementById('issues-card').classList.add('hidden');
+}
+
+async function copyResult() {
+  const text = document.getElementById('result-text').textContent;
+  await navigator.clipboard.writeText(text);
+  showToast('Скопировано!');
+}
+
+// --- СОСТОЯНИЕ ---
+let currentText = '';
+let issues = [];
+
+// --- ОЧИСТКА MARKDOWN + МАППИНГ ИНДЕКСОВ ---
+function cleanMarkdownWithMap(text) {
+  let clean = ''; const map = []; let i = 0;
+  while (i < text.length) {
+    if (text[i] === '#' && (i === 0 || text[i-1] === '\n')) { while (text[i] === '#' || text[i] === ' ') i++; continue; }
+    if (text[i] === '*' && text[i+1] === '*') { i += 2; continue; }
+    if (text[i] === '*') { i += 1; continue; }
+    if (text[i] === '-' && (i === 0 || text[i-1] === '\n')) { if (text[i+1] === ' ') { i += 2; continue; } }
+    clean += text[i]; map.push(i); i++;
+  }
+  return { clean, map };
+}
+
+function mapToOrig(cleanIndex, map, length) {
+  if (!map.length) return { offset: 0, length };
+  if (cleanIndex >= map.length) {
+    const last = map[map.length - 1];
+    return { offset: last, length };
+  }
+  const origStart = map[cleanIndex];
+  let origEnd = origStart;
+  if (length > 0) {
+    const endIndex = Math.min(cleanIndex + length - 1, map.length - 1);
+    origEnd = map[endIndex];
+  }
+  return { offset: origStart, length: Math.max(0, origEnd - origStart + 1) };
+}
+
+function normForCompare(s) {
+  return s.toLowerCase().replace(/ё/g, 'е');
+}
+
+// --- «Ё» СЛОВАРЬ ---
+const YO_WORDS = {
+  'еще':'ещё','ее':'её','все':'всё','мое':'моё','твое':'твоё','свое':'своё',
+  'чем':'чём','причем':'причём','ничем':'ничём','зачем':'зачём','почем':'почём',
+  'него':'него','нес':'нёс','лед':'лёд','елка':'ёлка','елки':'ёлки','елку':'ёлку',
+  'еж':'ёж','ежик':'ёжик','жест':'жёст','жесткий':'жёсткий','жестко':'жёстко',
+  'кошелка':'кошёлка','печенка':'печёнка','тушенка':'тушёнка','сгущенка':'сгущёнка',
+  'копченый':'копчёный','ученый':'учёный','черный':'чёрный','черная':'чёрная',
+  'черное':'чёрное','черные':'чёрные','желтый':'жёлтый','желтая':'жёлтая',
+  'желтое':'жёлтое','желтые':'жёлтые','шел':'шёл','пошел':'пошёл','пришел':'пришёл',
+  'ушел':'ушёл','нашел':'нашёл','зашел':'зашёл','вошел':'вошёл','перешел':'перешёл',
+  'прошел':'прошёл','подошел':'подошёл','отошел':'отошёл','актер':'актёр',
+  'режиссер':'режиссёр','шофер':'шофёр','костер':'костёр','ковер':'ковёр',
+  'партнер':'партнёр','боксер':'боксёр','дирижер':'дирижёр','стажер':'стажёр'
+};
+
+// --- ЛОКАЛЬНЫЕ ПРАВИЛА ---
+function localChecks(text, map) {
+  const found = [];
+  const push = (idx, len, word, message, replacements, type) => {
+    const pos = mapToOrig(idx, map, len);
+    found.push({
+      offset: pos.offset, length: pos.length,
+      word, message, replacements,
+      source: 'Локально', type
+    });
+  };
+
+  let m;
+
+  // 1. Пробел перед %
+  const rePct = /\d\s+%/g;
+  while ((m = rePct.exec(text))) {
+    push(m.index, m[0].length, m[0], 'Уберите пробел перед %',
+      [m[0].replace(/\s+/, '')], 'space');
+  }
+
+  // 2. Запятая в десятичных дробях
+  const reDec = /\d,\d+/g;
+  while ((m = reDec.exec(text))) {
+    push(m.index, m[0].length, m[0], 'Десятичная дробь — через точку',
+      [m[0].replace(',', '.')], 'punct');
+  }
+
+  // 3. Двойные пробелы
+  const reSp = / {2,}/g;
+  while ((m = reSp.exec(text))) {
+    push(m.index, m[0].length, m[0], 'Лишние пробелы', [' '], 'space');
+  }
+
+  // 4. Пробел перед знаком препинания (кавычки не трогаем)
+  const rePunct = /\s+([,.!?;:])/g;
+  while ((m = rePunct.exec(text))) {
+    push(m.index, m[0].length, m[0], 'Лишний пробел перед знаком препинания',
+      [m[1]], 'punct');
+  }
+
+  // 5. Нет пробела после знака препинания
+  //    Кавычки не трогаем, многоточие ... не трогаем,
+  //    десятичную запятую не трогаем.
+  const reAfter = /([,.!?;:])(?=[А-Яа-яЁёA-Za-z])/g;
+  while ((m = reAfter.exec(text))) {
+    const sign = m[1];
+    const idx = m.index;
+    const nextChar = text[idx + 1] || '';
+    const prevChar = text[idx - 1] || '';
+
+    // Многоточие: после точки ещё точка — пропускаем
+    if (sign === '.' && nextChar === '.') continue;
+
+    // Десятичная дробь: цифра,запятая,цифра — пропускаем
+    if (sign === ',' && /\d/.test(prevChar) && /\d/.test(nextChar)) continue;
+
+    // Открывающие кавычки не требуют пробела после себя
+    if (sign === '«' || sign === '“') continue;
+
+    push(idx, 1, sign, 'Нужен пробел после знака препинания',
+      [sign + ' '], 'punct');
+  }
+
+  // 6. «Ё» — словарь
+  const reWord = /[А-Яа-яЁё]+/g;
+  while ((m = reWord.exec(text))) {
+    const w = m[0];
+    const lower = w.toLowerCase();
+    if (YO_WORDS[lower] && lower !== YO_WORDS[lower]) {
+      const sug = YO_WORDS[lower];
+      const cased = w[0] === w[0].toUpperCase()
+        ? sug.charAt(0).toUpperCase() + sug.slice(1)
+        : sug;
+      push(m.index, w.length, w, 'Пропущена буква «ё»', [cased], 'spell');
+    }
+  }
+
+  // 7. HUNSPELL — главная проверка опечаток
+  if (hunspellReady && hunspell) {
+    const reWord3 = /[А-Яа-яЁё]{3,}/g;
+    while ((m = reWord3.exec(text))) {
+      const w = m[0];
+      if (YO_WORDS[w.toLowerCase()]) continue;
+      if (!hunspell.spell(w)) {
+        const suggestions = hunspell.suggest(w).slice(0, 3);
+        push(m.index, w.length, w,
+          'Слова нет в словаре — возможная опечатка',
+          suggestions, 'spell');
+      }
+    }
+  }
+
+  return found;
+}
+
+// --- ЯНДЕКС ---
+function checkYandex(text, map) {
+  return new Promise((resolve) => {
+    const cb = 'yCb_' + Date.now() + '_' + Math.random().toString(36).slice(2);
+    const script = document.createElement('script');
+    const cleanup = () => {
+      if (window[cb]) delete window[cb];
+      if (document.getElementById(cb)) document.body.removeChild(script);
+    };
+    window[cb] = (data) => {
+      cleanup();
+      if (!data || !data[0]) return resolve([]);
+      resolve(data[0].map(e => {
+        const pos = mapToOrig(e.pos, map, e.len);
+        const word = text.substr(e.pos, e.len);
+        return {
+          offset: pos.offset, length: pos.length,
+          word,
+          message: 'Орфография (Яндекс)',
+          replacements: (e.s || []).slice(0, 4),
+          source: 'Yandex',
+          type: 'spell'
+        };
+      }));
+    };
+    script.id = cb;
+    script.src = `https://speller.yandex.net/services/spellservice.json/checkText?text=${encodeURIComponent(text)}&callback=${cb}`;
+    script.onerror = () => { cleanup(); resolve([]); };
+    document.body.appendChild(script);
+  });
+}
+
+// --- LANGUAGETOOL ---
+async function checkLanguageTool(text, map) {
+  try {
+    const p = new URLSearchParams({ text, language: 'ru-RU' });
+    const res = await fetch('https://api.languagetool.org/v2/check', {
+      method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: p
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data.matches || []).map(m => {
+      if (m.rule.id === 'MORFOLOGIK_RULE_RU_RU') return null;
+
+      const word = text.substr(m.offset, m.length);
+      const norm = normForCompare(word);
+      const reps = (m.replacements || []).map(r => r.value);
+      if (reps.length > 0 && normForCompare(reps[0]) === norm) return null;
+
+      const pos = mapToOrig(m.offset, map, m.length);
+      const isPunct = (m.rule.category && m.rule.category.id === 'PUNCTUATION')
+        || m.message.toLowerCase().includes('пунктуац')
+        || m.rule.issueType === 'typography';
+
+      return {
+        offset: pos.offset, length: pos.length,
+        word,
+        message: m.message,
+        replacements: reps.slice(0, 4),
+        source: 'LanguageTool',
+        type: isPunct ? 'punct' : 'grammar'
+      };
+    }).filter(Boolean);
+  } catch { return []; }
+}
+
+// --- ГЛАВНАЯ ФУНКЦИЯ ---
+async function startCheck() {
+  const rawText = inputEl.value.trim();
+  if (!rawText) return showToast('Введите текст');
+
+  const btn = document.getElementById('btn-check');
+  btn.disabled = true; btn.textContent = 'Проверяю...';
+  issues = [];
+
+  if (!hunspellReady) {
+    await new Promise(r => {
+      const check = setInterval(() => {
+        if (hunspellReady) { clearInterval(check); r(); }
+      }, 200);
+      setTimeout(() => { clearInterval(check); r(); }, 5000);
+    });
+  }
+
+  const { clean, map } = cleanMarkdownWithMap(rawText);
+
+  const yandexPromise = Promise.race([
+    checkYandex(clean, map),
+    new Promise(r => setTimeout(() => r([]), 5000))
+  ]);
+  const ltPromise = checkLanguageTool(clean, map);
+  const localRes = localChecks(clean, map);
+
+  try {
+    const [yandexRes, ltRes] = await Promise.all([yandexPromise, ltPromise]);
+    let allIssues = [...yandexRes, ...ltRes, ...localRes];
+
+    const priority = { 'Yandex': 3, 'LanguageTool': 2, 'Локально': 4 };
+    const seen = new Map();
+    for (const iss of allIssues) {
+      if (!iss || iss.length <= 0) continue;
+      const key = `${iss.offset}:${iss.length}`;
+      const prev = seen.get(key);
+      if (!prev || (priority[iss.source] || 0) > (priority[prev.source] || 0)) {
+        seen.set(key, iss);
+      }
+    }
+
+    let unique = [...seen.values()].sort((a, b) => a.offset - b.offset);
+
+    const filtered = [];
+    for (const iss of unique) {
+      const end = iss.offset + iss.length;
+      const overlap = filtered.find(f => {
+        const fend = f.offset + f.length;
+        return iss.offset >= f.offset && end <= fend && iss.type === f.type;
+      });
+      if (!overlap) filtered.push(iss);
+    }
+    unique = filtered;
+
+    issues = unique.map((iss, i) => ({ ...iss, id: i, status: 'pending' }));
+    currentText = rawText;
+
+    render();
+    showToast(`Найдено: ${issues.length}`);
+  } catch (e) {
+    console.error(e);
+    showToast('Ошибка проверки');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Проверить (все)';
+  }
+}
+
+// --- РЕНДЕР ---
+function render() {
+  const rCard = document.getElementById('result-card');
+  const iCard = document.getElementById('issues-card');
+  const rText = document.getElementById('result-text');
+  const iList = document.getElementById('issues-list');
+
+  rCard.classList.remove('hidden');
+  iCard.classList.remove('hidden');
+
+  let html = '', cursor = 0;
+  const active = issues.filter(i => i.status === 'pending').sort((a,b) => a.offset - b.offset);
+
+  for (const issue of active) {
+    if (issue.offset < cursor) continue;
+    html += escapeHTML(currentText.slice(cursor, issue.offset));
+    const w = currentText.slice(issue.offset, issue.offset + issue.length);
+    let cls = 'typo';
+    if (issue.type === 'punct') cls += ' punct';
+    if (issue.type === 'space') cls += ' space';
+    html += `<span class="${cls}">${escapeHTML(w)}</span>`;
+    cursor = issue.offset + issue.length;
+  }
+  html += escapeHTML(currentText.slice(cursor));
+  rText.innerHTML = html;
+
+  if (!active.length) {
+    iList.innerHTML = '<div style="text-align:center; color:var(--muted); padding: 1rem;">Ошибок не найдено!</div>';
+    document.getElementById('progress-bar').style.width = '100%';
+    return;
+  }
+
+  iList.innerHTML = active.map(iss => {
+    const chips = iss.replacements.map(r =>
+      `<button class="sug" onclick="choose(${iss.id}, this, '${escapeAttr(r)}')">${escapeHTML(r)}</button>`
+    ).join('');
+
+    let wordCls = 'word';
+    if (iss.type === 'punct') wordCls += ' punct';
+    if (iss.type === 'space') wordCls += ' space';
+
+    return `
+      <div class="issue">
+        <div class="issue-head">
+          <span style="font-size:0.7rem; color:var(--muted)">${iss.source}</span>
+          <span class="${wordCls}">${escapeHTML(iss.word) || '...'}</span>
+        </div>
+        <div class="msg">${escapeHTML(iss.message)}</div>
+        <div class="suggestions">${chips}</div>
+        <input type="text" class="custom-input" id="in-${iss.id}" placeholder="Свой вариант...">
+        <div class="actions">
+          <button class="btn btn-ok" onclick="accept(${iss.id})">Принять</button>
+          <button class="btn btn-err" onclick="reject(${iss.id})">Отклонить</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  const done = issues.filter(i => i.status !== 'pending').length;
+  document.getElementById('progress-bar').style.width = `${(done / issues.length) * 100}%`;
+}
+
+// --- ПЕРЕСЧЁТ ПОЗИЦИЙ ---
+function findNearest(text, word, approxOffset) {
+  if (!word) return null;
+  const low = text.toLowerCase();
+  const w = word.toLowerCase();
+  let best = -1, bestDist = Infinity;
+  let i = 0;
+  while ((i = low.indexOf(w, i)) !== -1) {
+    const dist = Math.abs(i - approxOffset);
+    if (dist < bestDist) { bestDist = dist; best = i; }
+    i += w.length;
+  }
+  return best === -1 ? null : best;
+}
+
+function recalcPending() {
+  for (const iss of issues) {
+    if (iss.status !== 'pending') continue;
+    if (currentText.substr(iss.offset, iss.length) === iss.word) continue;
+    const idx = findNearest(currentText, iss.word, iss.offset);
+    if (idx === null) {
+      iss.status = 'rejected';
+    } else {
+      iss.offset = idx;
+      iss.length = iss.word.length;
+    }
+  }
+}
+
+// --- ДЕЙСТВИЯ ---
+function choose(id, btn, val) {
+  document.getElementById('in-' + id).value = val;
+  btn.parentElement.querySelectorAll('.sug').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+}
+
+function accept(id) {
+  const iss = issues.find(i => i.id === id);
+  if (!iss || iss.status !== 'pending') return;
+  const val = document.getElementById('in-' + id).value.trim() || iss.replacements[0] || iss.word;
+
+  currentText = currentText.slice(0, iss.offset) + val + currentText.slice(iss.offset + iss.length);
+  iss.status = 'accepted';
+  recalcPending();
+  render();
+}
+
+function reject(id) {
+  const iss = issues.find(i => i.id === id);
+  if (iss) iss.status = 'rejected';
+  render();
+}
+
+function acceptAll() {
+  const pending = issues.filter(i => i.status === 'pending').sort((a,b) => b.offset - a.offset);
+  for (const iss of pending) {
+    let val = iss.replacements[0] || iss.word;
+    const custom = document.getElementById('in-' + iss.id);
+    if (custom && custom.value.trim()) val = custom.value.trim();
+
+    currentText = currentText.slice(0, iss.offset) + val + currentText.slice(iss.offset + iss.length);
+    iss.status = 'accepted';
+  }
+  recalcPending();
+  render();
+}
+
+function rejectAll() {
+  issues.forEach(i => { if (i.status === 'pending') i.status = 'rejected'; });
+  render();
+}
+
+function escapeHTML(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function escapeAttr(s) { return s.replace(/\\/g, '\\\\').replace(/'/g, "\\'"); }
+</script>
+</body>
+</html>
