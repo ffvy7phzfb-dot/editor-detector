@@ -214,10 +214,8 @@ function clearAll() {
   document.getElementById('result-card').classList.add('hidden');
   document.getElementById('issues-card').classList.add('hidden');
   document.getElementById('result-text').innerHTML = '';
-  
   const list = document.getElementById('history-list');
   list.innerHTML = '<div class="history-item info">История очищена. Новый запрос!<span class="history-time">Только что</span></div>';
-  
   showToast('Текст и история очищены', 'info');
 }
 
@@ -373,17 +371,43 @@ async function checkLanguageTool(text) {
 function styleChecks(text) {
   const found = [];
   const push = (idx, len, word, message, replacements, type) => {
-    found.push({ offset: idx, length: len, word, message, replacements, source: 'Стиль', type: 'grammar' });
+    found.push({ offset: idx, length: len, word, message, replacements, source: 'Стиль (Памятки)', type: 'grammar' });
   };
   let m;
+
+  // 1. Слова-паразиты и усилители
   const amplifiers = /\b(очень|слишком|реально|просто|вообще|прямо|буквально)\b/gi;
-  while ((m = amplifiers.exec(text))) push(m.index, m[0].length, m[0], 'Слово-усилитель: можно убрать или заменить', ['убрать'], 'grammar');
-  const reStar = /^(\s*)\*(\s+)/gm;
-  while ((m = reStar.exec(text))) push(m.index + m[1].length, 1, '*', 'Замените звёздочку в списке на дефис', ['-'], 'punct');
-  const reEndSpaces = /[ \t]+$/gm;
-  while ((m = reEndSpaces.exec(text))) push(m.index, m[0].length, m[0], 'Лишние пробелы в конце строки', [''], 'space');
-  const reNoBlank = /([.!?])\n(?![ \t]*\n)([А-ЯЁA-Z«"])/g;
-  while ((m = reNoBlank.exec(text))) push(m.index + 1, 1, '\n', 'Между абзацами нужна пустая строка', ['\n\n'], 'space');
+  while ((m = amplifiers.exec(text))) push(m.index, m[0].length, m[0], 'Слово-усилитель. По памятке лучше убрать или заменить на точное определение.', ['убрать'], 'grammar');
+
+  // 2. Болд в начале абзаца (если это подзаголовок)
+  const reBoldStart = /(^|\n)\*\*([^*]+)\*\*/g;
+  while ((m = reBoldStart.exec(text))) {
+    const wordEnd = m.index + m[0].length;
+    const nextChar = text[wordEnd];
+    if (nextChar === ':') {
+      push(m.index + 2, m[2].length, m[2], 'Болд-подзаголовок с двоеточием. Ок, если далее идет перечисление.', ['Оставить'], 'grammar');
+    } else if (nextChar === '.') {
+      push(m.index + 2, m[2].length, m[2], 'Болд-подзаголовок с точкой. Ок, если это полноценный заголовок в подбор.', ['Оставить'], 'grammar');
+    } else {
+      push(m.index + 2, m[2].length, m[2], 'Болд без двоеточия/точки. Проверьте, уместен ли болд (по чек-листу).', ['Убрать болд'], 'grammar');
+    }
+  }
+
+  // 3. Многоточие (защита от ложного срабатывания на "нет пробела после точки")
+  // (это правило уже есть в localChecks, тут просто дублируем логику для стиля)
+
+  // 4. Курсив на брендах/названиях (по памятке "Курсив")
+  const brands = /\*([A-ZА-Я][a-zа-я]+)\*/g;
+  while ((m = brands.exec(text))) {
+    push(m.index, m[0].length, m[0], 'Курсив на бренде/названии. По памятке бренды не курсивят.', ['Убрать курсив'], 'grammar');
+  }
+
+  // 5. Проверка слова "например" (сложное правило, даем подсказку)
+  const reNaprimer = /,\s*например,\s*/gi;
+  while ((m = reNaprimer.exec(text))) {
+    push(m.index, m[0].length, m[0], 'Проверьте "например," — это уточняющий оборот или вводное слово?', ['Убрать запятую', 'Оставить'], 'punct');
+  }
+
   return found;
 }
 
@@ -407,17 +431,24 @@ function localChecks(text) {
     if (m[1] === ',' && /\d/.test(text[m.index - 1]) && /\d/.test(text[m.index + 1])) continue;
     push(m.index, 1, m[1], 'Нужен пробел после знака', [m[1] + ' '], 'punct');
   }
+  
+  // Лишние пробелы в конце строки
+  const reEndSpaces = /[ \t]+$/gm;
+  while ((m = reEndSpaces.exec(text))) push(m.index, m[0].length, m[0], 'Лишние пробелы в конце строки', [''], 'space');
+
+  // Звездочки в списках
+  const reStar = /^(\s*)\*(\s+)/gm;
+  while ((m = reStar.exec(text))) push(m.index + m[1].length, 1, '*', 'Замените звёздочку в списке на дефис', ['-'], 'punct');
+
   return found;
 }
   async function startCheck(mode = 'all') {
   const rawText = inputEl.value;
   if (!rawText.trim()) return showToast('Введите текст для проверки', 'error');
 
-  // Блокируем кнопки
   const btns = document.querySelectorAll('.toolbar button');
   btns.forEach(b => b.disabled = true);
   
-  // Меняем текст на нажатой кнопке
   let btnText = 'Проверяю...';
   if (mode === 'all') btnText = 'Проверяю всё...';
   if (mode === 'yandex') btnText = 'Яндекс...';
@@ -427,10 +458,8 @@ function localChecks(text) {
   const activeBtn = document.getElementById(mode === 'all' ? 'btn-all' : '');
   if (activeBtn) activeBtn.textContent = btnText;
   
-  // Запускаем таймер (для ИИ чуть дольше)
   startLoading(mode === 'ai' ? 15 : 5); 
 
-  // Показываем тост
   let modeName = 'всех сервисов';
   if (mode === 'yandex') modeName = 'Яндекса';
   if (mode === 'lt') modeName = 'LanguageTool';
@@ -444,21 +473,12 @@ function localChecks(text) {
     let styleRes = [];
     let aiRes = [];
 
-    // ЛОКАЛЬНЫЕ ПРАВИЛА (они быстрые, запускаем всегда)
     localRes = localChecks(rawText);
     styleRes = styleChecks(rawText);
 
-    // 1. ЯНДЕКС
-    if (mode === 'all' || mode === 'yandex') {
-      yandexRes = await checkYandex(rawText);
-    }
+    if (mode === 'all' || mode === 'yandex') yandexRes = await checkYandex(rawText);
+    if (mode === 'all' || mode === 'lt') ltRes = await checkLanguageTool(rawText);
 
-    // 2. LANGUAGETOOL
-    if (mode === 'all' || mode === 'lt') {
-      ltRes = await checkLanguageTool(rawText);
-    }
-
-    // 3. ИИ (GigaChat через ProxyAPI)
     if (mode === 'all' || mode === 'ai') {
       try {
         const proxyUrl = 'https://gigaproxy.w9m4tv8sww.workers.dev'; 
@@ -500,11 +520,9 @@ function localChecks(text) {
       }
     }
 
-    // Объединяем ВСЁ
     let allIssues = [...yandexRes, ...ltRes, ...localRes, ...styleRes, ...aiRes];
     allIssues.sort((a, b) => a.offset - b.offset);
     
-    // Убираем дубли
     const seen = new Set();
     const unique = [];
     for (const iss of allIssues) {
@@ -529,7 +547,6 @@ function localChecks(text) {
     stopLoading();
     showToast('Критическая ошибка проверки: ' + e.message, 'error');
   } finally {
-    // Разблокируем кнопки
     btns.forEach(b => b.disabled = false);
     if (activeBtn) activeBtn.textContent = 'Проверить (всё)';
   }
