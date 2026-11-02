@@ -84,6 +84,20 @@
   .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%) translateY(100px); background: var(--text); color: var(--bg); padding: 0.6rem 1.2rem; border-radius: 8px; font-weight: 600; transition: 0.3s; opacity: 0; z-index: 100; }
   .toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
   .hidden { display: none !important; }
+  #history-panel { position: fixed; top: 20px; right: 20px; width: 300px; max-height: 80vh; background: var(--card); backdrop-filter: blur(10px); border: 1px solid var(--border); border-radius: 16px; padding: 1rem; box-shadow: 0 10px 30px rgba(0,0,0,0.1); display: flex; flex-direction: column; z-index: 900; }
+  #history-panel h3 { font-size: 0.9rem; margin-bottom: 0.5rem; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
+  #history-list { overflow-y: auto; display: flex; flex-direction: column; gap: 0.5rem; padding-right: 5px; }
+  .history-item { background: var(--input); padding: 0.6rem; border-radius: 8px; font-size: 0.85rem; border-left: 4px solid var(--accent); animation: slideIn 0.3s ease-out; }
+  .history-item.success { border-left-color: var(--ok); }
+  .history-item.error { border-left-color: var(--err); }
+  .history-item.info { border-left-color: var(--yo); }
+  .history-time { font-size: 0.7rem; color: var(--muted); display: block; margin-top: 4px; }
+  @keyframes slideIn { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: translateX(0); } }
+  @media (max-width: 1100px) {
+    #history-panel { position: fixed; top: auto; bottom: 10px; left: 10px; right: 10px; width: auto; max-height: 200px; padding: 0.8rem; }
+    #history-panel h3 { display: none; }
+    .history-item { padding: 0.5rem; }
+  }
 </style>
 </head>
 <body>
@@ -92,6 +106,12 @@
   <div class="spinner"></div>
   <div class="loading-title">Анализирую...</div>
   <div class="loading-sub">Примерное время: <b><span id="time-left">3</span> сек.</b></div>
+</div>
+<div id="history-panel">
+  <h3>История действий</h3>
+  <div id="history-list">
+    <div class="history-item info">Добро пожаловать!<span class="history-time">Система готова к работе</span></div>
+  </div>
 </div>
 <div class="container">
   <header>
@@ -147,6 +167,16 @@
   }
 })();
 
+function addHistory(text, type = 'info') {
+  const list = document.getElementById('history-list');
+  const time = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  const item = document.createElement('div');
+  item.className = `history-item ${type}`;
+  item.innerHTML = `${text}<span class="history-time">${time}</span>`;
+  list.prepend(item);
+  if (list.children.length > 10) list.removeChild(list.lastChild);
+}
+
 function toggleTheme() {
   const html = document.documentElement;
   html.setAttribute('data-theme', html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
@@ -159,7 +189,8 @@ inputEl.addEventListener('input', () => {
   document.getElementById('c-words').textContent = t.trim() ? t.trim().split(/\s+/).length : 0;
 });
 
-function showToast(msg) {
+function showToast(msg, type = 'info') {
+  addHistory(msg, type);
   const t = document.getElementById('toast');
   t.textContent = msg; t.classList.add('show');
   setTimeout(() => t.classList.remove('show'), 2000);
@@ -170,7 +201,8 @@ async function pasteText() {
     const t = await navigator.clipboard.readText();
     inputEl.value = t;
     inputEl.dispatchEvent(new Event('input'));
-  } catch (e) { showToast('Нет доступа к буферу'); }
+    showToast('Текст вставлен из буфера', 'success');
+  } catch (e) { showToast('Нет доступа к буферу', 'error'); }
 }
 
 function clearAll() {
@@ -179,12 +211,13 @@ function clearAll() {
   document.getElementById('result-card').classList.add('hidden');
   document.getElementById('issues-card').classList.add('hidden');
   document.getElementById('result-text').innerHTML = '';
+  showToast('Текст и результаты очищены', 'info');
 }
 
 async function copyResult() {
   const text = document.getElementById('result-text').textContent;
   await navigator.clipboard.writeText(text);
-  showToast('Скопировано!');
+  showToast('Результат скопирован', 'success');
 }
 
 let currentText = '';
@@ -251,9 +284,9 @@ async function loadYoDictionary() {
 loadYoDictionary();
 
 async function applyYo() {
-  if (!yoReady || yoDict.length === 0) return showToast('Словарь ещё загружается');
+  if (!yoReady || yoDict.length === 0) return showToast('Словарь ещё загружается', 'error');
   let text = inputEl.value;
-  if (!text.trim()) return showToast('Введите текст');
+  if (!text.trim()) return showToast('Введите текст', 'error');
   startLoading(3);
   await new Promise(r => setTimeout(r, 50));
   let yoCount = 0;
@@ -286,10 +319,10 @@ async function applyYo() {
     document.getElementById('result-card').classList.remove('hidden');
     document.getElementById('issues-card').classList.add('hidden');
     stopLoading();
-    showToast(`Вставлено «ё»: ${yoCount}`);
+    showToast(`Вставлено «ё»: ${yoCount}`, 'success');
   } else {
     stopLoading();
-    showToast('Слов с пропущенной «ё» не найдено');
+    showToast('Слов с пропущенной «ё» не найдено', 'info');
   }
 }
 
@@ -369,15 +402,16 @@ function localChecks(text) {
   }
   return found;
 }
-
-async function startCheck() {
+  async function startCheck() {
   const rawText = inputEl.value;
-  if (!rawText.trim()) return showToast('Введите текст');
+  if (!rawText.trim()) return showToast('Введите текст для проверки', 'error');
 
   const btn = document.getElementById('btn-check');
   btn.disabled = true; 
   btn.textContent = 'Проверяю всё...';
   issues = [];
+  
+  showToast('Запущена проверка текста...', 'info');
   startLoading(10); 
 
   try {
@@ -393,8 +427,15 @@ async function startCheck() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: rawText })
       });
-      const aiData = await aiResponse.json();
       
+      if (!aiResponse.ok) {
+          const errData = await aiResponse.json();
+          throw new Error(errData.error || `Ошибка сервера: ${aiResponse.status}`);
+      }
+
+      const aiData = await aiResponse.json();
+      if (aiData.error) throw new Error(aiData.error);
+
       if (aiData.result && Array.isArray(aiData.result)) {
         let searchStartIndex = 0;
         for (const err of aiData.result) {
@@ -404,16 +445,19 @@ async function startCheck() {
                     offset: idx,
                     length: err.word.length,
                     word: rawText.substr(idx, err.word.length),
-                    message: 'ИИ: ' + (err.reason || 'Ошибка'),
+                    message: 'Нейросеть: ' + (err.reason || 'Ошибка'),
                     replacements: [err.suggestion],
-                    source: 'GigaChat (ИИ)',
+                    source: 'Нейросеть',
                     type: 'spell',
                 });
                 searchStartIndex = idx + err.word.length;
             }
         }
       }
-    } catch (e) { console.error("Ошибка ИИ:", e); }
+    } catch (e) { 
+        console.error("Ошибка ИИ:", e);
+        showToast('Нейросеть не ответила: ' + e.message, 'error');
+    }
 
     let allIssues = [...yandexRes, ...ltRes, ...localRes, ...styleRes, ...aiRes];
     allIssues.sort((a, b) => a.offset - b.offset);
@@ -430,11 +474,17 @@ async function startCheck() {
 
     stopLoading();
     render();
-    showToast(`Готово! Найдено: ${issues.length}`);
+    
+    if (issues.length > 0) {
+        showToast(`Проверка завершена. Найдено ошибок: ${issues.length}`, 'success');
+    } else {
+        showToast('Проверка завершена. Ошибок не найдено!', 'success');
+    }
+
   } catch (e) {
     console.error(e);
     stopLoading();
-    showToast('Ошибка проверки');
+    showToast('Критическая ошибка проверки: ' + e.message, 'error');
   } finally {
     btn.disabled = false; 
     btn.textContent = 'Проверить (всё)';
