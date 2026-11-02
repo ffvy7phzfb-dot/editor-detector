@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ai-redaktor</title>
+<title>✏️ ai-redaktor</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✏️</text></svg>">
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;800&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
 <style>
@@ -104,9 +104,8 @@
       Символов: <b id="c-all">0</b> | Без пробелов: <b id="c-no-space">0</b> | Слов: <b id="c-words">0</b>
     </div>
     <div class="toolbar">
-      <button class="btn btn-primary" onclick="startCheck()" id="btn-check">Проверить</button>
+      <button class="btn btn-primary" onclick="startCheck()" id="btn-check">Проверить (всё)</button>
       <button class="btn btn-yo" onclick="applyYo()" id="btn-yo">🔤 Ёфикатор</button>
-      <button class="btn btn-primary" onclick="checkWithAI()" id="btn-improve" style="background: #10b981;">✨ ИИ-Анализ</button>
       <button class="btn btn-ghost" onclick="pasteText()">Вставить</button>
       <button class="btn btn-ghost" onclick="clearAll()">Очистить</button>
     </div>
@@ -377,108 +376,68 @@ async function startCheck() {
 
   const btn = document.getElementById('btn-check');
   btn.disabled = true; 
-  btn.textContent = 'Анализирую...';
+  btn.textContent = 'Проверяю всё...';
   issues = [];
-  startLoading(4);
+  startLoading(10); 
 
   try {
     const [yandexRes, ltRes] = await Promise.all([checkYandex(rawText), checkLanguageTool(rawText)]);
     const localRes = localChecks(rawText);
     const styleRes = styleChecks(rawText);
-    let allIssues = [...yandexRes, ...ltRes, ...localRes, ...styleRes];
 
+    let aiRes = [];
+    try {
+      const proxyUrl = 'https://gigaproxy.w9m4tv8sww.workers.dev'; 
+      const aiResponse = await fetch(proxyUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: rawText })
+      });
+      const aiData = await aiResponse.json();
+      
+      if (aiData.result && Array.isArray(aiData.result)) {
+        let searchStartIndex = 0;
+        for (const err of aiData.result) {
+            const idx = rawText.toLowerCase().indexOf(err.word.toLowerCase(), searchStartIndex);
+            if (idx !== -1) {
+                aiRes.push({
+                    offset: idx,
+                    length: err.word.length,
+                    word: rawText.substr(idx, err.word.length),
+                    message: 'ИИ: ' + (err.reason || 'Ошибка'),
+                    replacements: [err.suggestion],
+                    source: 'GigaChat (ИИ)',
+                    type: 'spell',
+                });
+                searchStartIndex = idx + err.word.length;
+            }
+        }
+      }
+    } catch (e) { console.error("Ошибка ИИ:", e); }
+
+    let allIssues = [...yandexRes, ...ltRes, ...localRes, ...styleRes, ...aiRes];
     allIssues.sort((a, b) => a.offset - b.offset);
+    
     const seen = new Set();
     const unique = [];
     for (const iss of allIssues) {
       const key = `${iss.offset}:${iss.length}`;
       if (!seen.has(key)) { seen.add(key); unique.push(iss); }
     }
+
     issues = unique.map((iss, i) => ({ ...iss, id: i, status: 'pending' }));
     currentText = rawText;
+
     stopLoading();
     render();
     showToast(`Готово! Найдено: ${issues.length}`);
   } catch (e) {
+    console.error(e);
     stopLoading();
     showToast('Ошибка проверки');
   } finally {
     btn.disabled = false; 
-    btn.textContent = 'Проверить';
-  }
-}
-
-// НОВАЯ ФУНКЦИЯ ДЛЯ ИИ-АНАЛИЗА
-async function checkWithAI() {
-  const text = inputEl.value;
-  if (!text.trim()) return showToast('Введите текст');
-
-  const btn = document.getElementById('btn-improve');
-  btn.disabled = true;
-  btn.textContent = 'ИИ думает...';
-  startLoading(15);
-
-  try {
-    // Твой адрес Cloudflare Worker
-    const proxyUrl = 'https://gigaproxy.w9m4tv8sww.workers.dev'; 
-    
-    const response = await fetch(proxyUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: text })
-    });
-
-    const data = await response.json();
-    if (data.error) throw new Error(data.error);
-
-    const aiErrors = data.result || []; // Массив ошибок от ИИ
-
-    // Очищаем прошлые ошибки и текущий текст, чтобы показать чистый результат
-    issues = [];
-    currentText = text;
-
-    if (aiErrors.length === 0) {
-        // Если ошибок нет, показываем чистый текст и пишем, что ошибок нет
-        const resultDiv = document.getElementById('result-text');
-        resultDiv.textContent = text;
-        document.getElementById('result-card').classList.remove('hidden');
-        document.getElementById('issues-card').classList.remove('hidden'); // Показываем блок ошибок
-        document.getElementById('issues-list').innerHTML = '<div style="text-align:center; color:var(--muted); padding: 1rem;">ИИ не нашёл ошибок!</div>';
-        document.getElementById('progress-bar').style.width = '100%';
-        showToast('ИИ не нашёл ошибок.');
-        return;
-    }
-
-    // Если ошибки есть, добавляем их в список
-    let searchStartIndex = 0;
-    for (const err of aiErrors) {
-        const idx = text.toLowerCase().indexOf(err.word.toLowerCase(), searchStartIndex);
-        if (idx !== -1) {
-            issues.push({
-                id: issues.length,
-                offset: idx,
-                length: err.word.length,
-                word: text.substr(idx, err.word.length),
-                message: 'ИИ: ' + (err.reason || 'Ошибка'),
-                replacements: [err.suggestion],
-                source: 'GigaChat (ИИ)',
-                type: 'spell', // Красная подсветка
-                status: 'pending'
-            });
-            searchStartIndex = idx + err.word.length;
-        }
-    }
-
-    render(); 
-    showToast(`ИИ нашёл ошибок: ${issues.length}`);
-    
-  } catch (error) {
-    console.error(error);
-    showToast('Ошибка: ' + error.message);
-  } finally {
-    stopLoading();
-    btn.disabled = false;
-    btn.textContent = '✨ ИИ-Анализ';
+    btn.textContent = 'Проверить (всё)';
   }
 }
 
@@ -564,7 +523,6 @@ function accept(id) {
   const iss = issues.find(i => i.id === id);
   if (!iss || iss.status !== 'pending') return;
   const val = document.getElementById('in-' + id).value.trim() || iss.replacements[0] || iss.word;
-
   currentText = currentText.slice(0, iss.offset) + val + currentText.slice(iss.offset + iss.length);
   iss.status = 'accepted';
   render();
