@@ -370,8 +370,7 @@ function localChecks(text) {
   }
   return found;
 }
-
-async function startCheck() {
+  async function startCheck() {
   const rawText = inputEl.value;
   if (!rawText.trim()) return showToast('Введите текст');
 
@@ -446,6 +445,9 @@ async function improveText() {
     const aiErrors = data.result || [];
 
     if (aiErrors.length === 0) {
+        stopLoading();
+        btn.disabled = false;
+        btn.textContent = '✨ Улучшить стиль';
         showToast('GigaChat не нашёл ошибок.');
         return;
     }
@@ -473,14 +475,16 @@ async function improveText() {
 
     issues = issues.concat(newIssues);
     currentText = text;
+    
+    stopLoading();
     render(); 
     showToast(`GigaChat нашёл ошибок: ${newIssues.length}`);
     
   } catch (error) {
     console.error(error);
+    stopLoading();
     showToast('Ошибка: ' + error.message);
   } finally {
-    stopLoading();
     btn.disabled = false;
     btn.textContent = '✨ Улучшить стиль';
   }
